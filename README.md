@@ -54,8 +54,8 @@ pub fn example() {
 }
 ```
 
-See `doc/reference/spec.md` for the full v0.1.0 specification, and the
-public submodules (`multipartkit/parser`, `multipartkit/encoder`,
-`multipartkit/form`, `multipartkit/query`, `multipartkit/stream`,
-`multipartkit/validate`, `multipartkit/content_disposition`,
-`multipartkit/header`, `multipartkit/limit`) for the complete API.
+The complete API lives across the public submodules:
+`multipartkit/parser`, `multipartkit/encoder`, `multipartkit/form`,
+`multipartkit/query`, `multipartkit/stream`, `multipartkit/validate`,
+`multipartkit/content_disposition`, `multipartkit/header`, and
+`multipartkit/limit`.
