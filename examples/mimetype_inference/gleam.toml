@@ -1,0 +1,9 @@
+name = "multipartkit_mimetype_inference"
+version = "0.1.0"
+target = "erlang"
+description = "Runnable example: wire nao1215/mimetype into add_file_auto_with"
+
+[dependencies]
+gleam_stdlib = ">= 0.44.0 and < 2.0.0"
+mimetype = ">= 0.7.0 and < 1.0.0"
+multipartkit = { path = "../.." }

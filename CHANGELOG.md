@@ -38,6 +38,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Security
 
 - `form.add_field` / `add_file` / `add_file_auto` / `add_file_auto_with`
-  silently strip CR, LF, and NUL from the `name` and `filename`
-  parameters to prevent header injection. Use `unsafe_add_part` to
-  bypass.
+  silently strip CR, LF, and NUL from the `name`, `filename`, and
+  `content_type` parameters to prevent header injection. The cached
+  `name` / `filename` / `content_type` on the resulting `Part` reflect
+  the sanitized values, so `form.parts` and a parse-after-encode
+  round-trip agree. Use `unsafe_add_part` if byte-exact preservation is
+  required.
+
+### Documentation
+
+- Added four runnable examples under `examples/` — `quick_start`,
+  `parse_request`, `streaming_parse`, and `mimetype_inference`. The
+  `just examples` recipe builds and runs them all under
+  `--warnings-as-errors`; CI runs the same recipe on every push.
+- README rewritten as a user-facing front door (badges, install,
+  quick-start, examples table, streaming caveat).

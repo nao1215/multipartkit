@@ -1,0 +1,8 @@
+name = "multipartkit_quick_start"
+version = "0.1.0"
+target = "erlang"
+description = "Runnable example: encode and parse a multipart/form-data body"
+
+[dependencies]
+gleam_stdlib = ">= 0.44.0 and < 2.0.0"
+multipartkit = { path = "../.." }
