@@ -1,11 +1,3 @@
-//// Quick-start example for `multipartkit`.
-////
-//// Build a `multipart/form-data` body, encode it with a freshly generated
-//// boundary, and parse it back. Run with:
-////
-////    cd examples/quick_start
-////    gleam run
-
 import gleam/io
 import gleam/option.{None, Some}
 import multipartkit

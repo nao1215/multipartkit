@@ -34,27 +34,35 @@ gleam add gleam_yielder
 
 ## Quick start
 
+The snippet below is the source of `examples/quick_start` verbatim;
+copy it into `src/main.gleam`, run `gleam add multipartkit`, then
+`gleam run`.
+
 ```gleam
-import gleam/option.{Some}
-import gleeunit/should
+import gleam/io
+import gleam/option.{None, Some}
 import multipartkit
 import multipartkit/form
 import multipartkit/query
 
-pub fn round_trip_test() {
+pub fn main() {
   let request_form =
     form.new()
     |> form.add_field("title", "hello")
     |> form.add_file("avatar", "cat.png", "image/png", <<137, 80, 78, 71>>)
 
   let #(content_type, body) = multipartkit.encode_form(request_form)
+
   let assert Ok(parts) = multipartkit.parse(body, content_type)
-
-  query.required_field(parts, "title")
-  |> should.equal(Ok("hello"))
-
+  let assert Ok(title) = query.required_field(parts, "title")
   let assert Ok(avatar) = query.required_file(parts, "avatar")
-  avatar.filename |> should.equal(Some("cat.png"))
+
+  io.println("Content-Type: " <> content_type)
+  io.println("title=" <> title)
+  case avatar.filename {
+    Some(filename) -> io.println("avatar filename=" <> filename)
+    None -> io.println("avatar has no filename")
+  }
 }
 ```
 

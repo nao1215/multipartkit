@@ -10,6 +10,7 @@ import gleam/bit_array
 import gleam/int
 import gleam/io
 import gleam/option.{None, Some}
+import gleam/result
 import multipartkit
 import multipartkit/error.{
   type MultipartError, BodyTooLarge, DisallowedContentType, HeaderTooLarge,
@@ -43,7 +44,7 @@ pub fn main() {
 
 /// Decode an `Upload` from the raw body and content-type produced by an
 /// HTTP framework. Demonstrates how `parse_with_limits`, `query.required_*`,
-/// and `validate` compose into a tidy request pipeline.
+/// and `validate` compose into a tidy `use <- result.try` pipeline.
 pub fn parse_upload(
   body: BitArray,
   content_type: String,
@@ -56,43 +57,17 @@ pub fn parse_upload(
       max_parts: 10,
       max_header_bytes: 8_192,
     )
-  case multipartkit.parse_with_limits(body, content_type, limits) {
-    Error(err) -> Error(err)
-    Ok(parts) -> finalise_upload(parts)
-  }
-}
-
-fn finalise_upload(parts: List(Part)) -> Result(Upload, MultipartError) {
-  case query.required_field(parts, "title") {
-    Error(err) -> Error(err)
-    Ok(title) ->
-      case query.required_field(parts, "notes") {
-        Error(err) -> Error(err)
-        Ok(notes) ->
-          case query.required_file(parts, "avatar") {
-            Error(err) -> Error(err)
-            Ok(avatar) -> validate_avatar(avatar, title, notes)
-          }
-      }
-  }
-}
-
-fn validate_avatar(
-  avatar: Part,
-  title: String,
-  notes: String,
-) -> Result(Upload, MultipartError) {
-  case validate.max_file_size(avatar, 50_000) {
-    Error(err) -> Error(err)
-    Ok(avatar) ->
-      case
-        validate.allowed_content_types(avatar, ["image/png", "image/jpeg"])
-      {
-        Error(err) -> Error(err)
-        Ok(avatar) ->
-          Ok(Upload(title: title, notes: notes, avatar: avatar))
-      }
-  }
+  use parts <- result.try(
+    multipartkit.parse_with_limits(body, content_type, limits),
+  )
+  use title <- result.try(query.required_field(parts, "title"))
+  use notes <- result.try(query.required_field(parts, "notes"))
+  use avatar <- result.try(query.required_file(parts, "avatar"))
+  use avatar <- result.try(validate.max_file_size(avatar, 50_000))
+  use avatar <- result.try(validate.allowed_content_types(avatar, [
+    "image/png", "image/jpeg",
+  ]))
+  Ok(Upload(title: title, notes: notes, avatar: avatar))
 }
 
 fn sample_body() -> BitArray {
