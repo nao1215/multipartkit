@@ -54,6 +54,12 @@ check: clean
   gleam run -m glinter
   gleam build --warnings-as-errors
   gleam test
+  just check-readme
+
+# Verify that the first ```gleam``` snippet in README.md still matches
+# examples/quick_start (the source of truth for the quick-start code).
+check-readme:
+  sh scripts/check_readme_snippet.sh
 
 ci: deps check build-javascript test-javascript examples
 
