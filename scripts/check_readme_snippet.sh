@@ -28,6 +28,11 @@ awk '
   capture { print }
 ' "$README" > "$EXTRACTED"
 
+if [ ! -s "$EXTRACTED" ]; then
+  echo "error: README.md does not contain a non-empty first \`\`\`gleam\`\`\` block" >&2
+  exit 1
+fi
+
 if ! diff -u "$EXAMPLE" "$EXTRACTED"; then
   cat <<EOF >&2
 
