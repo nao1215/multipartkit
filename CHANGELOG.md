@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`form.add_file` / `form.add_file_auto`** now emit the RFC 5987 §3.2.1
+  `filename*=UTF-8''<percent-encoded>` form (alongside a sanitised legacy
+  `filename="<ascii-fallback>"`) when the filename contains bytes outside
+  the printable US-ASCII range. Previously, non-ASCII filenames were
+  emitted verbatim inside the legacy `filename="..."`, producing a
+  `Content-Disposition` value that violates RFC 7230 §3.2.4 and gets
+  mangled or rejected by strict HTTP intermediaries (cowboy, nginx, Go
+  `net/http`, browsers proxying uploads, …). ASCII-only filenames
+  continue to emit the legacy form unchanged. The non-ASCII fallback
+  legacy form replaces each non-ASCII grapheme with `_`. Round-tripping
+  through `parser.parse` recovers the original filename via the existing
+  RFC 5987 decoder in `content_disposition.parse`. (#4)
+
 ## [0.1.0] - 2026-04-29
 
 First public release.
