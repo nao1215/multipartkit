@@ -1,3 +1,4 @@
+import gleam/list
 import gleam/option.{None, Some}
 import gleeunit/should
 import multipartkit/encoder
@@ -149,6 +150,66 @@ pub fn add_file_strips_crlf_from_filename_test() {
   let assert Ok([the_part]) = parser.parse(body, content_type)
   // Re-parsed filename has the CRLF removed.
   the_part.filename |> should.equal(Some("evilname.txt"))
+}
+
+pub fn add_file_strips_crlf_from_content_type_test() {
+  // A Content-Type that injects "\r\nX-Evil: 1" must not produce an extra
+  // header on the wire.
+  let f =
+    form.new()
+    |> form.add_file("upload", "x.txt", "text/plain\r\nX-Evil: 1", <<"hi":utf8>>)
+  let assert [the_part] = form.parts(f)
+  // Cached metadata is sanitized to match the serialized form.
+  the_part.content_type
+  |> should.equal(Some("text/plainX-Evil: 1"))
+  // Round-trip the form and confirm only the intended Content-Type survives.
+  let #(content_type, body) = encoder.encode_form(f)
+  let assert Ok([reparsed]) = parser.parse(body, content_type)
+  reparsed.content_type
+  |> should.equal(Some("text/plainX-Evil: 1"))
+  // No spurious X-Evil header was injected.
+  case list.find(reparsed.headers, fn(entry) { entry.0 == "X-Evil" }) {
+    Error(Nil) -> Nil
+    Ok(_) -> should.fail()
+  }
+}
+
+pub fn add_file_auto_with_strips_crlf_from_inferred_content_type_test() {
+  let inferer =
+    infer.Inferer(
+      from_filename: fn(_) { Some("text/plain\r\nX-Evil: 1") },
+      from_bytes: fn(_) { None },
+    )
+  let f =
+    form.new()
+    |> form.add_file_auto_with("upload", "x.txt", <<"hi":utf8>>, inferer)
+  let assert [the_part] = form.parts(f)
+  the_part.content_type
+  |> should.equal(Some("text/plainX-Evil: 1"))
+}
+
+pub fn form_metadata_matches_round_tripped_parts_test() {
+  // The cached `name` / `filename` fields on a Form's parts must equal what
+  // a parse-after-encode round-trip would produce. Otherwise callers see
+  // different values from `form.parts` and `parse(encode_form(form))`.
+  let f =
+    form.new()
+    |> form.add_field("dangerous\r\nX-Inj: 1", "value")
+    |> form.add_file("upload", "evil\r\nname.txt", "text/plain\r\nX-Evil: 1", <<
+      "data":utf8,
+    >>)
+  let cached = form.parts(f)
+  let #(content_type, body) = encoder.encode_form(f)
+  let assert Ok(reparsed) = parser.parse(body, content_type)
+  case cached, reparsed {
+    [c1, c2], [r1, r2] -> {
+      c1.name |> should.equal(r1.name)
+      c2.name |> should.equal(r2.name)
+      c2.filename |> should.equal(r2.filename)
+      c2.content_type |> should.equal(r2.content_type)
+    }
+    _, _ -> should.fail()
+  }
 }
 
 pub fn add_field_with_quote_in_value_round_trips_test() {

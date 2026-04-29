@@ -23,14 +23,20 @@ pub fn new() -> Form {
 /// filename is set.
 ///
 /// Carriage returns, line feeds, and NUL bytes in `name` are silently
-/// stripped to prevent header injection. Use `unsafe_add_part` if byte-exact
+/// stripped to prevent header injection. The cached `name` on the resulting
+/// `Part` reflects the sanitized value, matching what a parse-after-encode
+/// round-trip would produce. Use `unsafe_add_part` if byte-exact
 /// preservation is required.
 pub fn add_field(form: Form, name: String, value: String) -> Form {
-  let disposition = #("Content-Disposition", "form-data; name=" <> quote(name))
+  let safe_name = sanitize_value(name)
+  let disposition = #(
+    "Content-Disposition",
+    "form-data; name=" <> quote(safe_name),
+  )
   let new_part =
     Part(
       headers: [disposition],
-      name: Some(name),
+      name: Some(safe_name),
       filename: None,
       content_type: None,
       body: <<value:utf8>>,
@@ -40,9 +46,11 @@ pub fn add_field(form: Form, name: String, value: String) -> Form {
 
 /// Append a file part with an explicit content type.
 ///
-/// Carriage returns, line feeds, and NUL bytes in `name` and `filename` are
-/// silently stripped to prevent header injection. Use `unsafe_add_part` if
-/// byte-exact preservation is required.
+/// Carriage returns, line feeds, and NUL bytes in `name`, `filename`, and
+/// `content_type` are silently stripped to prevent header injection. The
+/// cached `name`, `filename`, and `content_type` on the resulting `Part`
+/// reflect the sanitized values. Use `unsafe_add_part` if byte-exact
+/// preservation is required.
 pub fn add_file(
   form: Form,
   name: String,
@@ -76,6 +84,9 @@ pub fn add_file_auto(
 /// 1. `inferer.from_filename(filename)`
 /// 2. `inferer.from_bytes(body)`
 /// 3. `application/octet-stream`
+///
+/// The inferred content type is sanitized (CR / LF / NUL stripped) before
+/// being written to the header.
 pub fn add_file_auto_with(
   form: Form,
   name: String,
@@ -118,41 +129,39 @@ fn build_file_part(
   content_type: String,
   body: BitArray,
 ) -> Part {
+  let safe_name = sanitize_value(name)
+  let safe_filename = sanitize_value(filename)
+  let safe_content_type = sanitize_value(content_type)
   let disposition_header = #(
     "Content-Disposition",
-    "form-data; name=" <> quote(name) <> "; filename=" <> quote(filename),
+    "form-data; name="
+      <> quote(safe_name)
+      <> "; filename="
+      <> quote(safe_filename),
   )
-  let content_type_header = #("Content-Type", content_type)
+  let content_type_header = #("Content-Type", safe_content_type)
   Part(
     headers: [disposition_header, content_type_header],
-    name: Some(name),
-    filename: Some(filename),
-    content_type: Some(content_type),
+    name: Some(safe_name),
+    filename: Some(safe_filename),
+    content_type: Some(safe_content_type),
     body: body,
   )
 }
 
-fn quote(value: String) -> String {
-  "\"" <> sanitize_and_escape(value, "") <> "\""
+/// Strip CR, LF, and NUL from `value`. Used to neutralise header injection
+/// in any value that ends up on a header line — `name`, `filename`, and
+/// `content_type`.
+fn sanitize_value(value: String) -> String {
+  value
+  |> string.replace(each: "\r\n", with: "")
+  |> string.replace(each: "\r", with: "")
+  |> string.replace(each: "\n", with: "")
+  |> string.replace(each: "\u{0000}", with: "")
 }
 
-/// Strip CR, LF, and NUL from `value` while escaping `\` and `"` per
-/// RFC 7230 quoted-string rules.
-///
-/// The stripping prevents header injection: a name or filename that contains
-/// `\r\n` would otherwise terminate the `Content-Disposition` line and let
-/// the rest of the value be reinterpreted as a separate header. Stripping is
-/// silent on the `add_field` / `add_file` / `add_file_auto` builders; use
-/// `unsafe_add_part` if byte-exact preservation is required.
-fn sanitize_and_escape(remaining: String, acc: String) -> String {
-  // Replace combined CRLF graphemes with their individual stripped form.
-  let normalised =
-    remaining
-    |> string.replace(each: "\r\n", with: "")
-    |> string.replace(each: "\r", with: "")
-    |> string.replace(each: "\n", with: "")
-    |> string.replace(each: "\u{0000}", with: "")
-  escape_quoted(normalised, acc)
+fn quote(value: String) -> String {
+  "\"" <> escape_quoted(value, "") <> "\""
 }
 
 fn escape_quoted(remaining: String, acc: String) -> String {
