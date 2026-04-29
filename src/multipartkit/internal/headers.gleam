@@ -53,10 +53,12 @@ fn parse_line(line: String) -> Result(#(String, String), MultipartError) {
     True -> Error(InvalidHeader(line))
     False ->
       case string.split_once(line, on: ":") {
-        Error(_) -> Error(InvalidHeader(line))
+        Error(Nil) -> Error(InvalidHeader(line))
         Ok(#(name, value)) ->
           case name {
             "" -> Error(InvalidHeader(line))
+            // Strip surrounding optional whitespace per RFC 7230 §3.2.4.
+            // Inner whitespace, quotes, and parameters are preserved.
             _ -> Ok(#(name, trim_ows(value)))
           }
       }
@@ -64,8 +66,8 @@ fn parse_line(line: String) -> Result(#(String, String), MultipartError) {
 }
 
 fn trim_ows(value: String) -> String {
-  let leading_trimmed = text.skip_ows(value)
-  trim_trailing_ows(leading_trimmed)
+  let leading = text.skip_ows(value)
+  trim_trailing_ows(leading)
 }
 
 fn trim_trailing_ows(value: String) -> String {

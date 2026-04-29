@@ -5,8 +5,10 @@ import multipartkit/internal/text
 /// A parsed multipart part.
 ///
 /// `headers` keeps entries in the order they appeared on the wire; header
-/// names retain their original casing and values keep their raw byte sequence
-/// (no whitespace trimming, quote unescaping, or parameter normalisation).
+/// names retain their original casing. Header values have surrounding
+/// optional whitespace stripped per RFC 7230 §3.2.4 but are otherwise
+/// preserved (no quote unescaping, no parameter normalisation, no inner
+/// whitespace collapse).
 ///
 /// `body` is always raw bytes; the parser does not transcode or
 /// UTF-8-validate it.

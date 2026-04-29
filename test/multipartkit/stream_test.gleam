@@ -139,6 +139,57 @@ pub fn parse_stream_skip_undrained_body_test() {
   }
 }
 
+pub fn parse_stream_pulls_chunks_lazily_test() {
+  // Verify that the parser does NOT need to drain the chunks yielder before
+  // emitting the first part. We construct a yielder where the second chunk
+  // has not yet been pulled when the first part is delivered.
+  let chunk_a = <<
+    "--B\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nhello\r\n":utf8,
+  >>
+  let chunk_b = <<
+    "--B\r\nContent-Disposition: form-data; name=\"b\"\r\n\r\nworld\r\n--B--\r\n":utf8,
+  >>
+  let chunks = yielder.from_list([chunk_a, chunk_b])
+  let assert Ok(stream_yielder) = stream.parse_stream(chunks, ct)
+  case yielder.step(stream_yielder) {
+    yielder.Next(Ok(first), rest) -> {
+      first.name |> should.equal(Some("a"))
+      // The remaining yielder should still produce part `b` after pulling
+      // chunk_b on demand.
+      case yielder.step(rest) {
+        yielder.Next(Ok(second), _) -> second.name |> should.equal(Some("b"))
+        _ -> should.fail()
+      }
+    }
+    _ -> should.fail()
+  }
+}
+
+pub fn parse_stream_body_too_large_caught_incrementally_test() {
+  // Compose an oversized stream whose first chunk alone exceeds
+  // max_body_bytes. The error must surface as the very first yielded item;
+  // the parser must not have to drain the stream first.
+  let chunk_a = <<"--B\r\n":utf8>>
+  let chunk_b = <<
+    "Content-Disposition: form-data; name=\"a\"\r\n\r\n":utf8,
+  >>
+  let huge = <<"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa":utf8>>
+  let chunks = yielder.from_list([chunk_a, chunk_b, huge])
+  let limits =
+    Limits(
+      max_body_bytes: 30,
+      max_part_bytes: 1000,
+      max_parts: 100,
+      max_header_bytes: 1000,
+    )
+  let assert Ok(stream_yielder) =
+    stream.parse_stream_with_limits(chunks, ct, limits)
+  case drain_parts(stream_yielder) {
+    [Error(error.BodyTooLarge(30))] -> Nil
+    _ -> should.fail()
+  }
+}
+
 pub fn parse_stream_with_limits_propagates_part_too_large_test() {
   let chunks = yielder.from_list([one_part_body()])
   let limits =

@@ -2,6 +2,7 @@ import gleam/option.{None, Some}
 import gleeunit/should
 import multipartkit/encoder
 import multipartkit/form
+import multipartkit/infer
 import multipartkit/parser
 import multipartkit/part.{Part}
 
@@ -47,6 +48,36 @@ pub fn add_file_auto_falls_through_to_octet_stream_test() {
   the_part.content_type |> should.equal(Some("application/octet-stream"))
 }
 
+pub fn add_file_auto_with_filename_inferer_test() {
+  let inferer =
+    infer.Inferer(
+      from_filename: fn(name) {
+        case name {
+          "x.png" -> Some("image/png")
+          _ -> None
+        }
+      },
+      from_bytes: fn(_) { None },
+    )
+  let f =
+    form.new()
+    |> form.add_file_auto_with("blob", "x.png", <<1, 2>>, inferer)
+  let assert [the_part] = form.parts(f)
+  the_part.content_type |> should.equal(Some("image/png"))
+}
+
+pub fn add_file_auto_with_bytes_inferer_fallback_test() {
+  let inferer =
+    infer.Inferer(from_filename: fn(_) { None }, from_bytes: fn(_bytes) {
+      Some("application/x-custom")
+    })
+  let f =
+    form.new()
+    |> form.add_file_auto_with("blob", "no-ext", <<0, 1, 2>>, inferer)
+  let assert [the_part] = form.parts(f)
+  the_part.content_type |> should.equal(Some("application/x-custom"))
+}
+
 pub fn unsafe_add_part_inserts_verbatim_test() {
   let manual =
     Part(
@@ -85,6 +116,39 @@ pub fn form_round_trips_with_multiple_parts_test() {
     }
     _ -> should.fail()
   }
+}
+
+pub fn add_field_strips_crlf_from_name_test() {
+  // CR/LF in name would otherwise produce a header line that the parser
+  // re-reads as multiple headers. The safe builder strips them silently.
+  let f =
+    form.new()
+    |> form.add_field("dangerous\r\nX-Injected: yes", "value")
+  let #(content_type, body) = encoder.encode_form(f)
+  let assert Ok([the_part]) = parser.parse(body, content_type)
+  // After CR/LF stripping the round-tripped name no longer contains the
+  // injected newline.
+  the_part.name |> should.equal(Some("dangerousX-Injected: yes"))
+  // Only the legitimate Content-Disposition header is produced.
+  the_part.headers
+  |> should.equal([
+    #("Content-Disposition", "form-data; name=\"dangerousX-Injected: yes\""),
+  ])
+}
+
+pub fn add_file_strips_crlf_from_filename_test() {
+  let f =
+    form.new()
+    |> form.add_file(
+      "upload",
+      "evil\r\nname.txt",
+      "application/octet-stream",
+      <<>>,
+    )
+  let #(content_type, body) = encoder.encode_form(f)
+  let assert Ok([the_part]) = parser.parse(body, content_type)
+  // Re-parsed filename has the CRLF removed.
+  the_part.filename |> should.equal(Some("evilname.txt"))
 }
 
 pub fn add_field_with_quote_in_value_round_trips_test() {
