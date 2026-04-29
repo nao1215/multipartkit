@@ -54,8 +54,88 @@ pub fn example() {
 }
 ```
 
+### Streaming parse
+
+`parse_stream` pulls chunks from a `Yielder(BitArray)` lazily and yields
+`StreamPart`s as soon as their headers and body have been buffered.
+`max_body_bytes` is enforced incrementally, so an oversized stream is
+rejected before it is fully consumed.
+
+```gleam
+import gleam/yielder
+import multipartkit
+import multipartkit/stream
+
+pub fn handle(chunks, content_type) {
+  // Errors decidable from `content_type` alone surface in the outer Result.
+  let assert Ok(parts) = multipartkit.parse_stream(chunks, content_type)
+
+  yielder.each(parts, fn(item) {
+    case item {
+      Ok(stream_part) -> {
+        let assert Ok(_body) = stream.drain_body(stream_part.body)
+        Nil
+      }
+      // After the first error the iterator is exhausted; subsequent steps
+      // return Done.
+      Error(_) -> Nil
+    }
+  })
+}
+```
+
+### Validation
+
+`multipartkit/validate` exposes small composable predicates that play
+well with `dataprep`-style validation pipelines:
+
+```gleam
+import multipartkit/query
+import multipartkit/validate
+
+pub fn require_avatar(parts) {
+  let assert Ok(avatar) = query.required_file(parts, "avatar")
+  let assert Ok(avatar) = validate.max_file_size(avatar, 5_000_000)
+  validate.allowed_content_types(avatar, ["image/png", "image/jpeg"])
+}
+```
+
+### Inferring file content types
+
+`form.add_file_auto` always falls through to `application/octet-stream`
+because the default inferer returns `None`. Wire
+[`nao1215/mimetype`](https://github.com/nao1215/mimetype) (or any
+other inferer) via `add_file_auto_with` to opt into inference:
+
+```gleam
+import gleam/option.{None, Some}
+import mimetype
+import multipartkit/form
+import multipartkit/infer.{Inferer}
+
+let mimetype_inferer =
+  Inferer(
+    from_filename: fn(name) {
+      case mimetype.filename_to_mime_type_strict(name) {
+        Ok(value) -> Some(value)
+        Error(_) -> None
+      }
+    },
+    from_bytes: fn(bytes) {
+      case mimetype.detect_strict(bytes) {
+        Ok(value) -> Some(value)
+        Error(_) -> None
+      }
+    },
+  )
+
+let form_value =
+  form.new()
+  |> form.add_file_auto_with("upload", "x.png", bytes, mimetype_inferer)
+```
+
 The complete API lives across the public submodules:
 `multipartkit/parser`, `multipartkit/encoder`, `multipartkit/form`,
 `multipartkit/query`, `multipartkit/stream`, `multipartkit/validate`,
-`multipartkit/content_disposition`, `multipartkit/header`, and
-`multipartkit/limit`.
+`multipartkit/content_disposition`, `multipartkit/header`,
+`multipartkit/infer`, and `multipartkit/limit`.
