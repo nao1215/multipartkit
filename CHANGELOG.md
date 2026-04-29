@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-04-29
+
 ### Fixed
 
 - **`form.add_file` / `form.add_file_auto`** now emit the RFC 5987 §3.2.1
