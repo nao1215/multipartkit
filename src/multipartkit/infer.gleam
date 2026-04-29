@@ -13,28 +13,31 @@ import gleam/option.{type Option, None}
 /// `Inferer` to `form.add_file_auto_with`:
 ///
 /// ```gleam
-/// import gleam/option.{None, Some}
+/// import gleam/option.{type Option, None, Some}
 /// import mimetype
-/// import multipartkit/form
-/// import multipartkit/infer.{Inferer}
+/// import multipartkit/form.{type Form}
+/// import multipartkit/infer.{type Inferer, Inferer}
 ///
-/// let mimetype_inferer =
-///   Inferer(
-///     from_filename: fn(name) {
-///       case mimetype.filename_to_mime_type_strict(name) {
-///         Ok(value) -> Some(value)
-///         Error(_) -> None
-///       }
-///     },
-///     from_bytes: fn(bytes) {
-///       case mimetype.detect_strict(bytes) {
-///         Ok(value) -> Some(value)
-///         Error(_) -> None
-///       }
-///     },
-///   )
-///
-/// form.add_file_auto_with(form_value, "upload", "x.png", bytes, mimetype_inferer)
+/// pub fn upload_with_mimetype(
+///   form_value: Form,
+///   filename: String,
+///   bytes: BitArray,
+/// ) -> Form {
+///   let from_filename = fn(name: String) -> Option(String) {
+///     case mimetype.filename_to_mime_type_strict(name) {
+///       Ok(value) -> Some(value)
+///       Error(_) -> None
+///     }
+///   }
+///   let from_bytes = fn(body: BitArray) -> Option(String) {
+///     case mimetype.detect_strict(body) {
+///       Ok(value) -> Some(value)
+///       Error(_) -> None
+///     }
+///   }
+///   let inferer = Inferer(from_filename: from_filename, from_bytes: from_bytes)
+///   form.add_file_auto_with(form_value, "upload", filename, bytes, inferer)
+/// }
 /// ```
 pub type Inferer {
   Inferer(

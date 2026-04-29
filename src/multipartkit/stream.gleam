@@ -18,6 +18,13 @@ import multipartkit/part.{type Part}
 /// arise while reading the body (`PartTooLarge`, `UnexpectedEndOfInput`,
 /// etc.) are surfaced inline as `Error(_)` items rather than swallowed.
 ///
+/// In v0.1.0 the input chunks yielder is consumed lazily, but each
+/// `StreamPart` body is materialised as a single buffered chunk before the
+/// part is yielded. The body yielder therefore always emits at most one
+/// `Ok(BitArray)` (or one `Error(_)`). Per-part memory is bounded by
+/// `max_part_bytes`. True chunk-by-chunk body streaming is on the roadmap
+/// but is not part of v0.1.0.
+///
 /// Note: the spec lists `body` as `iterator.Iterator(_)`. v0.1.0 uses
 /// `gleam/yielder.Yielder(_)` because gleam_stdlib 1.0.0 dropped the
 /// `iterator` module. The streaming surface is experimental and the type
@@ -305,8 +312,10 @@ fn compact_buffer(state: StreamState) -> StreamState {
   }
 }
 
-/// Internal: create a stream-part record from a fully buffered part. Used by
-/// tests and for converting buffered parses to stream output.
+/// Build a `StreamPart` from a fully buffered `Part`.
+///
+/// Useful when feeding parts into `encode_stream` or when adapting a
+/// buffered parse result into the streaming API surface.
 pub fn from_part(the_part: Part) -> StreamPart {
   StreamPart(
     headers: the_part.headers,
@@ -317,8 +326,12 @@ pub fn from_part(the_part: Part) -> StreamPart {
   )
 }
 
-/// Internal: best-effort consumption of a `StreamPart` body into a single
-/// `BitArray`. Used for testing.
+/// Consume a `StreamPart`'s body yielder and return the concatenated bytes.
+///
+/// Stops at the first `Error(_)` and returns it. Because `StreamPart.body`
+/// in v0.1.0 always emits a single buffered chunk, this is a constant-time
+/// pull over a one-element yielder; future releases that switch to true
+/// chunked body streaming will still let this helper drain the whole body.
 pub fn drain_body(
   source: Yielder(Result(BitArray, MultipartError)),
 ) -> Result(BitArray, MultipartError) {

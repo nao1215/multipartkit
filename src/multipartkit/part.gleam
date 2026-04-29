@@ -10,8 +10,10 @@ import multipartkit/internal/text
 /// preserved (no quote unescaping, no parameter normalisation, no inner
 /// whitespace collapse).
 ///
-/// `body` is always raw bytes; the parser does not transcode or
-/// UTF-8-validate it.
+/// Header bytes must be valid UTF-8 — header blocks that contain non-UTF-8
+/// bytes are rejected with `InvalidHeader`. The body has no such
+/// restriction: it is always treated as raw bytes; the parser does not
+/// transcode or UTF-8-validate it.
 ///
 /// `name`, `filename`, and `content_type` are convenience caches derived from
 /// `Content-Disposition` and `Content-Type` headers per the field/file
