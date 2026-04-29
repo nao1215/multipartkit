@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-04-29
+
+First public release.
+
 ### Added
 
 - Project scaffold: Gleam package metadata, cross-target CI workflows,
@@ -33,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   - `multipartkit/limit` — `Limits` and `default_limits`
   - `multipartkit/infer` — pluggable `Inferer` (default `None`); wire
     `nao1215/mimetype` or another inferer via `add_file_auto_with`
-- 133 unit tests passing on both Erlang/BEAM and JavaScript targets.
+- 136 unit tests passing on both Erlang/BEAM and JavaScript targets.
 
 ### Security
 
@@ -47,9 +51,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Documentation
 
-- Added four runnable examples under `examples/` — `quick_start`,
+- Four runnable examples under `examples/` — `quick_start`,
   `parse_request`, `streaming_parse`, and `mimetype_inference`. The
   `just examples` recipe builds and runs them all under
   `--warnings-as-errors`; CI runs the same recipe on every push.
-- README rewritten as a user-facing front door (badges, install,
-  quick-start, examples table, streaming caveat).
+- README written as a user-facing front door: badges, install,
+  quick-start, examples table, and an explicit streaming caveat for
+  v0.1.0. The README quick-start snippet is pinned to the
+  `examples/quick_start` source via `scripts/check_readme_snippet.sh`,
+  enforced by CI.
+
+[0.1.0]: https://github.com/nao1215/multipartkit/releases/tag/v0.1.0
