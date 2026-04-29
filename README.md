@@ -111,3 +111,7 @@ just ci
 `just` recipes source `scripts/lib/mise_bootstrap.sh` so `mise activate`
 is not required in the current shell. See
 [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full workflow.
+
+## License
+
+Released under the [MIT License](LICENSE) — see the file for details.
