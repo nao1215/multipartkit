@@ -41,16 +41,21 @@ pub fn main() {
 }
 
 /// Build an `Inferer` that delegates to `nao1215/mimetype`.
+///
+/// `mimetype` returns its results as `MimeType` values (an opaque type
+/// since 0.8.0); `multipartkit/infer.Inferer` wants `String`. The
+/// adapters below run each candidate through `mimetype.to_string`
+/// before handing it back to multipartkit.
 pub fn mimetype_inferer() -> Inferer {
   let from_filename = fn(name: String) -> Option(String) {
     case mimetype.filename_to_mime_type_strict(name) {
-      Ok(value) -> Some(value)
+      Ok(value) -> Some(mimetype.to_string(value))
       Error(_) -> None
     }
   }
   let from_bytes = fn(body: BitArray) -> Option(String) {
     case mimetype.detect_strict(body) {
-      Ok(value) -> Some(value)
+      Ok(value) -> Some(mimetype.to_string(value))
       Error(_) -> None
     }
   }

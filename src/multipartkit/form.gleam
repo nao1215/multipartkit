@@ -1,5 +1,8 @@
+import gleam/bit_array
+import gleam/int
 import gleam/list
 import gleam/option.{None, Some}
+import gleam/result
 import gleam/string
 import multipartkit/infer
 import multipartkit/part.{type Part, Part}
@@ -136,8 +139,7 @@ fn build_file_part(
     "Content-Disposition",
     "form-data; name="
       <> quote(safe_name)
-      <> "; filename="
-      <> quote(safe_filename),
+      <> filename_disposition_params(safe_filename),
   )
   let content_type_header = #("Content-Type", safe_content_type)
   Part(
@@ -147,6 +149,151 @@ fn build_file_part(
     content_type: Some(safe_content_type),
     body: body,
   )
+}
+
+/// Build the `; filename=...` portion of a Content-Disposition header
+/// for a file part.
+///
+/// For ASCII-safe filenames (every code point is printable US-ASCII
+/// per RFC 7230 §3.2.4) the legacy `filename="..."` form is sufficient
+/// and is emitted unchanged.
+///
+/// For filenames that contain bytes outside that range, the legacy
+/// form would produce a header value that violates RFC 7230 §3.2.4 and
+/// is mangled or rejected by strict HTTP intermediaries. We emit BOTH:
+///
+/// - `filename="<ascii-fallback>"` — non-ASCII code points replaced
+///   with `_`. Lets pre-RFC-5987 clients still see a sensible name.
+/// - `filename*=UTF-8''<percent-encoded>` — RFC 5987 §3.2.1 / RFC 6266
+///   §4.3 form, faithful round-trip for spec-aware parsers.
+///
+/// RFC 5987 §3.2.2: when both forms are present, the `*=` form takes
+/// precedence — multipartkit's own `content_disposition.parse` already
+/// honours that ordering, as do all browsers and the major HTTP
+/// servers.
+fn filename_disposition_params(filename: String) -> String {
+  case is_ascii_safe(filename) {
+    True -> "; filename=" <> quote(filename)
+    False ->
+      "; filename="
+      <> quote(ascii_fallback(filename))
+      <> "; filename*=UTF-8''"
+      <> percent_encode_rfc5987(filename)
+  }
+}
+
+/// True iff every code point in `s` is printable US-ASCII (0x20-0x7E)
+/// or HTAB. Matches the subset of bytes RFC 7230 §3.2.4 admits as
+/// header field values.
+fn is_ascii_safe(s: String) -> Bool {
+  is_ascii_safe_loop(bit_array.from_string(s))
+}
+
+fn is_ascii_safe_loop(bytes: BitArray) -> Bool {
+  case bytes {
+    <<>> -> True
+    <<b, rest:bytes>> ->
+      case b == 0x09 || { b >= 0x20 && b <= 0x7E } {
+        True -> is_ascii_safe_loop(rest)
+        False -> False
+      }
+    _ -> False
+  }
+}
+
+/// Replace every non-ASCII-safe code point in `s` with `_` so the
+/// result is safe for use inside a legacy `filename="..."`. Used as
+/// the pre-RFC-5987 fallback alongside `filename*=`.
+fn ascii_fallback(s: String) -> String {
+  ascii_fallback_loop(string.to_graphemes(s), "")
+}
+
+fn ascii_fallback_loop(remaining: List(String), acc: String) -> String {
+  case remaining {
+    [] -> acc
+    [grapheme, ..rest] ->
+      case is_ascii_safe(grapheme) {
+        True -> ascii_fallback_loop(rest, acc <> grapheme)
+        False -> ascii_fallback_loop(rest, acc <> "_")
+      }
+  }
+}
+
+/// Percent-encode the UTF-8 byte representation of `s` per RFC 5987
+/// §3.2.1 attr-char. Bytes that match the attr-char production
+/// (`ALPHA / DIGIT / "!" / "#" / "$" / "&" / "+" / "-" / "." / "^" /
+/// "_" / "`" / "|" / "~"`) pass through unencoded; every other byte
+/// is emitted as `%HH` with uppercase hex digits.
+fn percent_encode_rfc5987(s: String) -> String {
+  percent_encode_loop(bit_array.from_string(s), "")
+}
+
+fn percent_encode_loop(bytes: BitArray, acc: String) -> String {
+  case bytes {
+    <<>> -> acc
+    <<b, rest:bytes>> -> {
+      // attr-char bytes pass through as their literal ASCII character;
+      // every other byte (including the high bytes of multi-byte UTF-8
+      // sequences) is emitted as `%HH`. `bit_array.to_string` is used
+      // for the attr-char branch and falls back to the percent-byte
+      // form on any conversion error — every byte for which
+      // `is_attr_char` returns True is in the printable US-ASCII range
+      // and converts cleanly, so the fallback is purely for type
+      // safety.
+      let chunk = case is_attr_char(b) {
+        False -> percent_byte(b)
+        True -> bit_array.to_string(<<b>>) |> result.unwrap(percent_byte(b))
+      }
+      percent_encode_loop(rest, acc <> chunk)
+    }
+    _ -> acc
+  }
+}
+
+fn is_attr_char(b: Int) -> Bool {
+  // ALPHA / DIGIT
+  { b >= 0x41 && b <= 0x5A }
+  || { b >= 0x61 && b <= 0x7A }
+  || { b >= 0x30 && b <= 0x39 }
+  // ! # $ & + - . ^ _ ` | ~
+  || b == 0x21
+  || b == 0x23
+  || b == 0x24
+  || b == 0x26
+  || b == 0x2B
+  || b == 0x2D
+  || b == 0x2E
+  || b == 0x5E
+  || b == 0x5F
+  || b == 0x60
+  || b == 0x7C
+  || b == 0x7E
+}
+
+fn percent_byte(b: Int) -> String {
+  "%" <> hex_digit(b / 16) <> hex_digit(b % 16)
+}
+
+fn hex_digit(n: Int) -> String {
+  case n {
+    0 -> "0"
+    1 -> "1"
+    2 -> "2"
+    3 -> "3"
+    4 -> "4"
+    5 -> "5"
+    6 -> "6"
+    7 -> "7"
+    8 -> "8"
+    9 -> "9"
+    10 -> "A"
+    11 -> "B"
+    12 -> "C"
+    13 -> "D"
+    14 -> "E"
+    15 -> "F"
+    _ -> int.to_string(n)
+  }
 }
 
 /// Strip CR, LF, and NUL from `value`. Used to neutralise header injection
