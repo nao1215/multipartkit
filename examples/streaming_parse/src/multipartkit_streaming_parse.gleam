@@ -18,7 +18,7 @@ import gleam/option.{None, Some}
 import gleam/yielder
 import multipartkit
 import multipartkit/error.{type MultipartError, BodyTooLarge}
-import multipartkit/limit.{Limits}
+import multipartkit/limit
 import multipartkit/stream
 
 pub fn main() {
@@ -50,8 +50,7 @@ fn run_happy() -> Result(Nil, MultipartError) {
       yielder.each(parts_yielder, fn(item) {
         case item {
           Ok(stream_part) -> describe_part(stream_part)
-          Error(_) ->
-            io.println("error item — iterator is now exhausted")
+          Error(_) -> io.println("error item — iterator is now exhausted")
         }
       })
       Ok(Nil)
@@ -74,9 +73,7 @@ fn describe_body(body: BitArray) -> String {
   case bit_array.to_string(body) {
     Ok(text) -> "text: " <> text
     Error(_) ->
-      "binary, "
-      <> int.to_string(bit_array.byte_size(body))
-      <> " bytes"
+      "binary, " <> int.to_string(bit_array.byte_size(body)) <> " bytes"
   }
 }
 
@@ -84,10 +81,9 @@ fn run_oversized() -> Nil {
   let big_first_chunk = <<
     "--B\r\nContent-Disposition: form-data; name=\"big\"\r\n\r\nAAAAAAAAAAAAAAAAAAAA":utf8,
   >>
-  let chunks =
-    yielder.from_list([big_first_chunk, <<"\r\n--B--\r\n":utf8>>])
-  let limits =
-    Limits(
+  let chunks = yielder.from_list([big_first_chunk, <<"\r\n--B--\r\n":utf8>>])
+  let assert Ok(limits) =
+    limit.new(
       max_body_bytes: 30,
       max_part_bytes: 1000,
       max_parts: 100,
@@ -103,8 +99,8 @@ fn run_oversized() -> Nil {
     yielder.Next(Error(BodyTooLarge(limit_value)), _) ->
       io.println(
         "rejected after pulling chunk 1: BodyTooLarge("
-          <> int.to_string(limit_value)
-          <> ")",
+        <> int.to_string(limit_value)
+        <> ")",
       )
     _ -> io.println("(unexpected outcome)")
   }

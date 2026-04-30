@@ -31,6 +31,10 @@ pub type Form =
 pub type Limits =
   limit.Limits
 
+/// Re-export of `multipartkit/limit.LimitConfigError`.
+pub type LimitConfigError =
+  limit.LimitConfigError
+
 /// Re-export of `multipartkit/error.MultipartError`.
 pub type MultipartError =
   error.MultipartError
@@ -94,4 +98,21 @@ pub fn encode_stream(
 /// Re-export of `multipartkit/limit.default_limits`.
 pub fn default_limits() -> Limits {
   limit.default_limits()
+}
+
+/// Re-export of `multipartkit/limit.new`. Construct a validated
+/// `Limits` value; non-positive fields surface as
+/// `LimitConfigError.NonPositiveLimit`.
+pub fn new_limits(
+  max_body_bytes max_body_bytes: Int,
+  max_part_bytes max_part_bytes: Int,
+  max_parts max_parts: Int,
+  max_header_bytes max_header_bytes: Int,
+) -> Result(Limits, LimitConfigError) {
+  limit.new(
+    max_body_bytes: max_body_bytes,
+    max_part_bytes: max_part_bytes,
+    max_parts: max_parts,
+    max_header_bytes: max_header_bytes,
+  )
 }

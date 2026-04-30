@@ -16,7 +16,7 @@ import multipartkit/error.{
   type MultipartError, BodyTooLarge, DisallowedContentType, HeaderTooLarge,
   InvalidUtf8Field, MissingField, MissingFile, PartTooLarge, TooManyParts,
 }
-import multipartkit/limit.{Limits}
+import multipartkit/limit
 import multipartkit/part.{type Part}
 import multipartkit/query
 import multipartkit/validate
@@ -50,33 +50,36 @@ pub fn parse_upload(
   content_type: String,
 ) -> Result(Upload, MultipartError) {
   // Tighter limits than `default_limits()` for a public endpoint.
-  let limits =
-    Limits(
+  // The values are hard-coded so the validated `new` is known to
+  // succeed; production code with dynamic values should propagate
+  // `LimitConfigError` through the result chain.
+  let assert Ok(limits) =
+    limit.new(
       max_body_bytes: 1_000_000,
       max_part_bytes: 200_000,
       max_parts: 10,
-      max_header_bytes: 8_192,
+      max_header_bytes: 8192,
     )
-  use parts <- result.try(
-    multipartkit.parse_with_limits(body, content_type, limits),
-  )
+  use parts <- result.try(multipartkit.parse_with_limits(
+    body,
+    content_type,
+    limits,
+  ))
   use title <- result.try(query.required_field(parts, "title"))
   use notes <- result.try(query.required_field(parts, "notes"))
   use avatar <- result.try(query.required_file(parts, "avatar"))
   use avatar <- result.try(validate.max_file_size(avatar, 50_000))
-  use avatar <- result.try(validate.allowed_content_types(avatar, [
-    "image/png", "image/jpeg",
-  ]))
+  use avatar <- result.try(
+    validate.allowed_content_types(avatar, ["image/png", "image/jpeg"]),
+  )
   Ok(Upload(title: title, notes: notes, avatar: avatar))
 }
 
 fn sample_body() -> BitArray {
-  let dash = bit_array.from_string(
-    "------WebKitFormBoundary7MA4YWxkTrZu0gW\r\n",
-  )
-  let close = bit_array.from_string(
-    "------WebKitFormBoundary7MA4YWxkTrZu0gW--\r\n",
-  )
+  let dash =
+    bit_array.from_string("------WebKitFormBoundary7MA4YWxkTrZu0gW\r\n")
+  let close =
+    bit_array.from_string("------WebKitFormBoundary7MA4YWxkTrZu0gW--\r\n")
   bit_array.concat([
     dash,
     <<"Content-Disposition: form-data; name=\"title\"\r\n\r\n":utf8>>,

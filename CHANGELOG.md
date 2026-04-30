@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **limit**: validated `Limits` builder `limit.new(...)` returns
+  `Result(Limits, LimitConfigError)` and rejects non-positive values
+  through the `NonPositiveLimit(field:, given:)` variant. Field
+  accessor functions (`max_body_bytes`, `max_part_bytes`, `max_parts`,
+  `max_header_bytes`) provide a stable inspection surface ahead of
+  the `Limits` type being closed. The top-level facade re-exports
+  the type and builder as `multipartkit.LimitConfigError` and
+  `multipartkit.new_limits`. Direct `Limits(...)` construction stays
+  available so this is non-breaking, but the runnable examples now
+  use the validated builder. (#10)
+
 ## [0.2.0] - 2026-04-29
 
 ### Fixed
