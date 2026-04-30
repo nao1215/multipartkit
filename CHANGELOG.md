@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-04-30
+
 ### Added
 
 - **limit**: validated `Limits` builder `limit.new(...)` returns
