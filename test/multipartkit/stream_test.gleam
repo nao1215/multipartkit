@@ -225,3 +225,85 @@ pub fn from_datastream_to_datastream_identity_test() {
     |> yielder.to_list
   result |> should.equal([<<1>>, <<2, 3>>])
 }
+
+fn repeat_byte(byte: Int, count: Int) -> BitArray {
+  repeat_byte_loop(byte, count, <<>>)
+}
+
+fn repeat_byte_loop(byte: Int, count: Int, acc: BitArray) -> BitArray {
+  case count {
+    0 -> acc
+    _ -> repeat_byte_loop(byte, count - 1, bit_array.append(acc, <<byte>>))
+  }
+}
+
+pub fn parse_stream_body_yielded_in_multiple_chunks_for_large_parts_test() {
+  // Construct a body whose size strictly exceeds one body chunk
+  // (body_chunk_size = 65_536). The body yielder must emit more than one
+  // Ok(BitArray) item, and concatenation must round-trip.
+  let big_body = repeat_byte(0x41, 200_000)
+  let prefix = <<
+    "--B\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\n":utf8,
+  >>
+  let suffix = <<"\r\n--B--\r\n":utf8>>
+  let body =
+    prefix
+    |> bit_array.append(big_body)
+    |> bit_array.append(suffix)
+  let chunks = yielder.from_list([body])
+  let assert Ok(limits) =
+    limit.new(
+      max_body_bytes: 1_000_000,
+      max_part_bytes: 1_000_000,
+      max_parts: 100,
+      max_header_bytes: 1000,
+    )
+  let assert Ok(stream_yielder) =
+    stream.parse_stream_with_limits(chunks, ct, limits)
+  case drain_parts(stream_yielder) {
+    [Ok(stream_part)] -> {
+      let body_yielder = stream.body(stream_part)
+      let body_items = yielder.to_list(body_yielder)
+      // The yielder must surface multiple Ok chunks for a 200_000-byte body.
+      case list.length(body_items) > 1 {
+        True -> Nil
+        False -> should.fail()
+      }
+      let assert Ok(reassembled) =
+        list.try_fold(body_items, <<>>, fn(acc, item) {
+          case item {
+            Ok(chunk) -> Ok(bit_array.append(acc, chunk))
+            Error(err) -> Error(err)
+          }
+        })
+      reassembled |> should.equal(big_body)
+    }
+    _ -> should.fail()
+  }
+}
+
+pub fn parse_stream_max_part_bytes_caught_incrementally_test() {
+  // Stream where a single part body grows past max_part_bytes while the
+  // closing boundary is still many chunks away. The parser must reject it
+  // before pulling and buffering the whole body.
+  let prefix = <<
+    "--B\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\n":utf8,
+  >>
+  let body_first = repeat_byte(0x41, 200)
+  let body_second = repeat_byte(0x42, 200)
+  let suffix = <<"\r\n--B--\r\n":utf8>>
+  let chunks = yielder.from_list([prefix, body_first, body_second, suffix])
+  let assert Ok(limits) =
+    limit.new(
+      max_body_bytes: 1_000_000,
+      max_part_bytes: 50,
+      max_parts: 100,
+      max_header_bytes: 1000,
+    )
+  let assert Ok(stream_yielder) =
+    stream.parse_stream_with_limits(chunks, ct, limits)
+  case drain_parts(stream_yielder) {
+    [Error(PartTooLarge(50))] -> Nil
+    _ -> should.fail()
+  }
+}

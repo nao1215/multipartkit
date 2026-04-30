@@ -15,9 +15,8 @@ import multipartkit/part.{type Part}
 /// One streamed multipart part.
 ///
 /// Opaque — inspect through `all_headers/1`, `name/1`, `filename/1`,
-/// `content_type/1`, and `body/1`. The internal layout may evolve as
-/// the streaming surface stabilises (see issue #7 for the chunked-body
-/// follow-up) without breaking external callers.
+/// `content_type/1`, and `body/1`. The internal layout may evolve
+/// without breaking external callers.
 ///
 /// Body semantics:
 ///
@@ -25,11 +24,11 @@ import multipartkit/part.{type Part}
 ///   replayed. Errors that arise while reading the body
 ///   (`PartTooLarge`, `UnexpectedEndOfInput`, etc.) are surfaced inline
 ///   as `Error(_)` items rather than swallowed.
-/// - In the current release each `StreamPart` body is materialised as a
-///   single buffered chunk before the part is yielded. The body yielder
-///   therefore always emits at most one `Ok(BitArray)` (or one
-///   `Error(_)`). Per-part memory is bounded by `max_part_bytes`. True
-///   chunk-by-chunk body streaming is on the roadmap.
+/// - The body yielder emits the part body in fixed-size chunks (up to
+///   ~64 KiB each) so consumers can fold over a large part without
+///   loading the whole body into a single `BitArray`. Smaller bodies
+///   fit in a single chunk. Per-part memory inside the parser is still
+///   bounded by `max_part_bytes`.
 ///
 /// Note: the public spec describes `body` as `iterator.Iterator(_)`.
 /// The current implementation uses `gleam/yielder.Yielder(_)` because
@@ -90,9 +89,13 @@ pub fn parse_stream(
 /// Parse a stream of input chunks with caller-supplied limits.
 ///
 /// Chunks are pulled lazily: bytes are consumed from `chunks` only as needed
-/// to deliver the next part's headers and body. `max_body_bytes` is enforced
-/// incrementally as chunks arrive, so an oversized stream is rejected before
-/// it is fully buffered. Per-part memory is bounded by `max_part_bytes`.
+/// to deliver the next part's headers and body. `max_body_bytes` and
+/// `max_part_bytes` are both enforced incrementally as chunks arrive, so an
+/// oversized stream — or an oversized individual part — is rejected at the
+/// chunk that crosses the limit, not after the whole part is buffered.
+/// Per-part memory is bounded by `max_part_bytes`. Body bytes are surfaced
+/// to consumers in fixed-size chunks via `StreamPart.body` (see the
+/// `StreamPart` doc).
 pub fn parse_stream_with_limits(
   chunks: Yielder(BitArray),
   content_type: String,
@@ -130,6 +133,14 @@ pub fn from_datastream(source: Yielder(BitArray)) -> Yielder(BitArray) {
 pub fn to_datastream(source: Yielder(BitArray)) -> Yielder(BitArray) {
   source
 }
+
+/// Maximum size of a single body chunk emitted by `StreamPart.body`.
+///
+/// Chosen to match common HTTP chunk and OS page sizes. Bodies smaller
+/// than this are emitted as a single chunk; larger bodies are split
+/// into successive chunks of at most this many bytes (the last chunk
+/// may be smaller).
+const body_chunk_size: Int = 65_536
 
 type StreamState {
   StreamState(
@@ -276,7 +287,6 @@ fn finalise_body(
   meta: internal_headers.DerivedMeta,
 ) -> PartOutcome {
   case scan.find_delimiter(state.buf, state.pattern, body_start) {
-    scan.Incomplete -> NeedMore
     scan.Found(body_end_excl, kind, after_delim) ->
       finalise_part(
         state,
@@ -287,6 +297,21 @@ fn finalise_body(
         header_list,
         meta,
       )
+    scan.Incomplete -> {
+      let max = limit.max_part_bytes(state.limits)
+      let buf_size = bit_array.byte_size(state.buf)
+      // The next delimiter starts with `\r\n--` plus the boundary token; even
+      // accounting for a partial delimiter at the tail of `buf`, any bytes in
+      // [body_start, buf_size - safety) are confirmed body bytes, so if that
+      // lower bound already exceeds `max_part_bytes` we can fail right now
+      // without pulling more chunks.
+      let safety = bit_array.byte_size(state.pattern) + 4
+      let confirmed_body_size = buf_size - body_start - safety
+      case confirmed_body_size > max {
+        True -> Failed(PartTooLarge(max))
+        False -> NeedMore
+      }
+    }
   }
 }
 
@@ -314,7 +339,7 @@ fn finalise_part(
               name: meta.name,
               filename: meta.filename,
               content_type: meta.content_type,
-              body: yielder.from_list([Ok(part_body)]),
+              body: chunk_body(part_body, body_chunk_size),
             )
           let next_done = case kind {
             scan.Closing -> True
@@ -352,27 +377,57 @@ fn compact_buffer(state: StreamState) -> StreamState {
 /// Build a `StreamPart` from a fully buffered `Part`.
 ///
 /// Useful when feeding parts into `encode_stream` or when adapting a
-/// buffered parse result into the streaming API surface.
+/// buffered parse result into the streaming API surface. The resulting
+/// body yielder emits the buffered bytes in chunks of up to
+/// `body_chunk_size`, matching the behaviour of `parse_stream`.
 pub fn from_part(the_part: Part) -> StreamPart {
   StreamPart(
     headers: part.all_headers(the_part),
     name: part.name(the_part),
     filename: part.filename(the_part),
     content_type: part.content_type(the_part),
-    body: yielder.from_list([Ok(part.body(the_part))]),
+    body: chunk_body(part.body(the_part), body_chunk_size),
   )
 }
 
 /// Consume a `StreamPart`'s body yielder and return the concatenated bytes.
 ///
-/// Stops at the first `Error(_)` and returns it. Because `StreamPart.body`
-/// in v0.1.0 always emits a single buffered chunk, this is a constant-time
-/// pull over a one-element yielder; future releases that switch to true
-/// chunked body streaming will still let this helper drain the whole body.
+/// Stops at the first `Error(_)` and returns it. The body yielder may
+/// emit multiple `Ok(BitArray)` items for large parts; this helper folds
+/// them into a single `BitArray` for callers that only need the full
+/// body in memory.
 pub fn drain_body(
   source: Yielder(Result(BitArray, MultipartError)),
 ) -> Result(BitArray, MultipartError) {
   drain_loop(source, <<>>)
+}
+
+/// Internal: split a fully buffered body into a yielder of fixed-size
+/// chunks of at most `chunk_size` bytes each. The last chunk may be
+/// smaller. An empty body still emits one empty chunk so that callers
+/// that fold over `Ok(_)` items see at least one body item per part.
+fn chunk_body(
+  body: BitArray,
+  chunk_size: Int,
+) -> Yielder(Result(BitArray, MultipartError)) {
+  let total = bit_array.byte_size(body)
+  case total {
+    0 -> yielder.from_list([Ok(<<>>)])
+    _ ->
+      yielder.unfold(0, fn(offset) {
+        case offset >= total {
+          True -> yielder.Done
+          False -> {
+            let take = case offset + chunk_size > total {
+              True -> total - offset
+              False -> chunk_size
+            }
+            let chunk = bytes.slice_or_empty(body, offset, take)
+            yielder.Next(Ok(chunk), offset + take)
+          }
+        }
+      })
+  }
 }
 
 fn drain_loop(

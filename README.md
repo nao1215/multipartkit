@@ -86,16 +86,25 @@ gleam run
 
 Run them all from the repo root with `just examples`.
 
-## Streaming caveat (v0.1.0)
+## Streaming semantics
 
 `parse_stream` pulls input chunks lazily and enforces `max_body_bytes`
-incrementally, so an oversized stream is rejected at the chunk that
-crosses the limit, not after the whole body is buffered. **However**,
-each `StreamPart.body` is materialised as a single buffered chunk
-before the part is yielded; per-part memory is bounded by
-`max_part_bytes` rather than by an arbitrary chunk size. True
-chunk-by-chunk body streaming is on the roadmap but is not part of
-v0.1.0.
+and `max_part_bytes` incrementally, so an oversized stream — or an
+oversized individual part — is rejected at the chunk that crosses the
+limit, rather than after the whole body has been buffered.
+
+Each `StreamPart.body` is a single-pass yielder that emits the part
+body in fixed-size chunks of up to ~64 KiB (a smaller body fits in a
+single chunk). Consumers can fold over the body chunk-by-chunk —
+forwarding to a file, hash, or downstream stream — without ever
+materialising the entire body as a single application-level
+`BitArray`. Use `stream.drain_body` when you do want the full body in
+memory.
+
+Inside the parser, per-part working memory remains bounded by
+`max_part_bytes`. `from_part` adapts a buffered `Part` into the same
+chunked-yielder shape so that mixed pipelines see a uniform body
+surface.
 
 ## Public modules
 
