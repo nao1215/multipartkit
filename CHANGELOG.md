@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-30
+
 ### Added
 
 - **Golden wire fixtures for the encoder, parser, and streaming
