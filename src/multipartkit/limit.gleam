@@ -1,3 +1,4 @@
+import gleam/bool
 import gleam/result
 
 /// Limits applied during parsing to bound resource consumption.
@@ -89,10 +90,11 @@ pub fn new(
 }
 
 fn check_positive(field: String, value: Int) -> Result(Nil, LimitConfigError) {
-  case value < 1 {
-    True -> Error(NonPositiveLimit(field: field, given: value))
-    False -> Ok(Nil)
-  }
+  use <- bool.guard(
+    value < 1,
+    Error(NonPositiveLimit(field: field, given: value)),
+  )
+  Ok(Nil)
 }
 
 /// Total-input byte budget. See `Limits.max_body_bytes`.
