@@ -2,20 +2,20 @@ import gleam/option.{None, Some}
 import gleeunit/should
 import multipartkit/encoder
 import multipartkit/parser
-import multipartkit/part.{Part}
+import multipartkit/part
 
 const ct = "multipart/form-data; boundary=ROUND"
 
 pub fn parse_then_encode_then_parse_test() {
   let parts = [
-    Part(
+    part.new(
       headers: [#("Content-Disposition", "form-data; name=\"a\"")],
       name: Some("a"),
       filename: None,
       content_type: None,
       body: <<"first":utf8>>,
     ),
-    Part(
+    part.new(
       headers: [
         #("Content-Disposition", "form-data; name=\"b\"; filename=\"f.bin\""),
         #("Content-Type", "application/octet-stream"),
@@ -33,7 +33,7 @@ pub fn parse_then_encode_then_parse_test() {
 
 pub fn encode_canonical_then_parse_byte_identical_test() {
   let parts = [
-    Part(
+    part.new(
       headers: [#("Content-Disposition", "form-data; name=\"a\"")],
       name: Some("a"),
       filename: None,
@@ -49,7 +49,7 @@ pub fn encode_canonical_then_parse_byte_identical_test() {
 
 pub fn empty_body_round_trip_test() {
   let parts = [
-    Part(
+    part.new(
       headers: [#("Content-Disposition", "form-data; name=\"empty\"")],
       name: Some("empty"),
       filename: None,

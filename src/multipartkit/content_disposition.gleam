@@ -8,25 +8,52 @@ import multipartkit/internal/text
 
 /// A parsed `Content-Disposition` header value.
 ///
-/// `disposition` is lowercased (`"form-data"`, `"attachment"`, ...).
+/// Opaque — inspect through `disposition/1`, `name/1`, `filename/1`, and
+/// `params/1`. The internal layout may grow more fields (a parsed
+/// `creation-date`, etc.) without breaking external pattern matches.
 ///
-/// `name` and `filename` are convenience accessors decoded from RFC 5987 /
-/// RFC 8187 `*`-form when present (with the `*`-form taking precedence over
-/// the plain form), otherwise from the plain parameter value with surrounding
-/// quotes removed and backslash-escapes resolved per RFC 7230 quoted-string
-/// rules.
+/// Semantics of each accessor:
 ///
-/// `params` contains every parameter as it appeared in the input including
-/// `filename` and `name`, in order. Duplicate parameter names are preserved
-/// left-to-right; only the first occurrence wins for the convenience
-/// `name`/`filename` fields.
-pub type ContentDisposition {
+/// - `disposition/1` is lowercased (`"form-data"`, `"attachment"`, ...).
+/// - `name/1` and `filename/1` are convenience accessors decoded from
+///   RFC 5987 / RFC 8187 `*`-form when present (with the `*`-form taking
+///   precedence over the plain form), otherwise from the plain parameter
+///   value with surrounding quotes removed and backslash-escapes resolved
+///   per RFC 7230 quoted-string rules.
+/// - `params/1` contains every parameter as it appeared in the input
+///   including `filename` and `name`, in order. Duplicate parameter names
+///   are preserved left-to-right; only the first occurrence wins for the
+///   convenience `name`/`filename` fields.
+pub opaque type ContentDisposition {
   ContentDisposition(
     disposition: String,
     name: Option(String),
     filename: Option(String),
     params: List(#(String, String)),
   )
+}
+
+/// The `disposition` token, lowercased.
+pub fn disposition(parsed: ContentDisposition) -> String {
+  parsed.disposition
+}
+
+/// The decoded `name` parameter, or `None` if absent.
+pub fn name(parsed: ContentDisposition) -> Option(String) {
+  parsed.name
+}
+
+/// The decoded `filename` parameter, or `None` if absent. Honours
+/// RFC 5987 / RFC 8187 `*`-form precedence.
+pub fn filename(parsed: ContentDisposition) -> Option(String) {
+  parsed.filename
+}
+
+/// All raw parameters as `(key, value)` pairs in input order. Includes
+/// `name` and `filename` (and `*`-form variants) before convenience
+/// decoding.
+pub fn params(parsed: ContentDisposition) -> List(#(String, String)) {
+  parsed.params
 }
 
 /// Parse a Content-Disposition header value.

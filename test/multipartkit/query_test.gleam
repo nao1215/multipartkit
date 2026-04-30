@@ -1,11 +1,11 @@
 import gleam/option.{None, Some}
 import gleeunit/should
 import multipartkit/error.{InvalidUtf8Field, MissingField, MissingFile}
-import multipartkit/part.{type Part, Part}
+import multipartkit/part.{type Part}
 import multipartkit/query
 
 fn text_part(name: String, body: BitArray) -> Part {
-  Part(
+  part.new(
     headers: [],
     name: Some(name),
     filename: None,
@@ -15,7 +15,7 @@ fn text_part(name: String, body: BitArray) -> Part {
 }
 
 fn file_part(name: String, filename: String, body: BitArray) -> Part {
-  Part(
+  part.new(
     headers: [],
     name: Some(name),
     filename: Some(filename),
@@ -25,7 +25,13 @@ fn file_part(name: String, filename: String, body: BitArray) -> Part {
 }
 
 fn anonymous_part(body: BitArray) -> Part {
-  Part(headers: [], name: None, filename: None, content_type: None, body: body)
+  part.new(
+    headers: [],
+    name: None,
+    filename: None,
+    content_type: None,
+    body: body,
+  )
 }
 
 pub fn field_returns_first_match_test() {
@@ -83,14 +89,14 @@ pub fn file_returns_first_match_test() {
     file_part("upload", "b.txt", <<"bye":utf8>>),
   ]
   let assert Some(found) = query.file(parts, "upload")
-  found.filename |> should.equal(Some("a.txt"))
+  part.filename(found) |> should.equal(Some("a.txt"))
 }
 
 pub fn file_includes_empty_filename_test() {
   // Spec: filename = Some("") still counts as a file (unselected file input).
   let parts = [file_part("upload", "", <<>>)]
   let assert Some(found) = query.file(parts, "upload")
-  found.filename |> should.equal(Some(""))
+  part.filename(found) |> should.equal(Some(""))
 }
 
 pub fn required_file_missing_test() {
@@ -106,8 +112,8 @@ pub fn files_returns_all_test() {
   let result = query.files(parts, "docs")
   case result {
     [first, second] -> {
-      first.filename |> should.equal(Some("a"))
-      second.filename |> should.equal(Some("b"))
+      part.filename(first) |> should.equal(Some("a"))
+      part.filename(second) |> should.equal(Some("b"))
     }
     _ -> should.fail()
   }

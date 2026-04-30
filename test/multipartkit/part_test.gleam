@@ -1,9 +1,9 @@
 import gleam/option.{None, Some}
 import gleeunit/should
-import multipartkit/part.{type Part, Part}
+import multipartkit/part.{type Part}
 
 fn sample() -> Part {
-  Part(
+  part.new(
     headers: [
       #("Content-Disposition", "form-data; name=\"a\""),
       #("X-Trace", "first"),
@@ -38,7 +38,7 @@ pub fn header_lookup_uses_ascii_only_case_folding_test() {
   // Add a part with a header named like that and look up "x-custom-i"; they
   // must NOT match.
   let p =
-    Part(
+    part.new(
       headers: [#(dotless, "value")],
       name: None,
       filename: None,

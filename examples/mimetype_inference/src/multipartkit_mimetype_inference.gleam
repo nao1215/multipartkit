@@ -74,15 +74,15 @@ pub fn add_file_auto_with_mimetype(
 }
 
 fn describe_part(the_part: part.Part) -> Nil {
-  let name = case the_part.name {
+  let name = case part.name(the_part) {
     Some(value) -> value
     None -> "(none)"
   }
-  let filename = case the_part.filename {
+  let filename = case part.filename(the_part) {
     Some(value) -> value
     None -> "(none)"
   }
-  let content_type = case the_part.content_type {
+  let content_type = case part.content_type(the_part) {
     Some(value) -> value
     None -> "(none)"
   }

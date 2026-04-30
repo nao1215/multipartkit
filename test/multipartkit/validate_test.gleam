@@ -1,11 +1,11 @@
 import gleam/option.{type Option, None, Some}
 import gleeunit/should
 import multipartkit/error.{DisallowedContentType, PartTooLarge}
-import multipartkit/part.{type Part, Part}
+import multipartkit/part.{type Part}
 import multipartkit/validate
 
 fn build_part(name: String, ct: Option(String), body: BitArray) -> Part {
-  Part(
+  part.new(
     headers: [],
     name: Some(name),
     filename: None,

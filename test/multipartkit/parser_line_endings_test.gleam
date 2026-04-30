@@ -1,6 +1,7 @@
 import gleam/option.{Some}
 import gleeunit/should
 import multipartkit/parser
+import multipartkit/part
 
 const ct = "multipart/form-data; boundary=B"
 
@@ -9,8 +10,8 @@ pub fn parse_lf_only_line_endings_test() {
     "--B\nContent-Disposition: form-data; name=\"a\"\n\nhello\n--B--\n":utf8,
   >>
   let assert Ok([field_part]) = parser.parse(body, ct)
-  field_part.name |> should.equal(Some("a"))
-  field_part.body |> should.equal(<<"hello":utf8>>)
+  part.name(field_part) |> should.equal(Some("a"))
+  part.body(field_part) |> should.equal(<<"hello":utf8>>)
 }
 
 pub fn parse_mixed_line_endings_test() {
@@ -19,8 +20,8 @@ pub fn parse_mixed_line_endings_test() {
     "--B\r\nContent-Disposition: form-data; name=\"a\"\nContent-Type: text/plain\r\n\nhello\r\n--B--\r\n":utf8,
   >>
   let assert Ok([field_part]) = parser.parse(body, ct)
-  field_part.name |> should.equal(Some("a"))
-  field_part.body |> should.equal(<<"hello":utf8>>)
+  part.name(field_part) |> should.equal(Some("a"))
+  part.body(field_part) |> should.equal(<<"hello":utf8>>)
 }
 
 pub fn parse_bare_cr_inside_body_is_preserved_test() {
@@ -30,7 +31,7 @@ pub fn parse_bare_cr_inside_body_is_preserved_test() {
     13, "bar\r\n--B--\r\n":utf8,
   >>
   let assert Ok([file_part]) = parser.parse(body, ct)
-  file_part.body |> should.equal(<<"foo":utf8, 13, "bar":utf8>>)
+  part.body(file_part) |> should.equal(<<"foo":utf8, 13, "bar":utf8>>)
 }
 
 pub fn parse_lf_terminated_closing_test() {
@@ -38,5 +39,5 @@ pub fn parse_lf_terminated_closing_test() {
     "--B\nContent-Disposition: form-data; name=\"a\"\n\nx\n--B--\n":utf8,
   >>
   let assert Ok([field_part]) = parser.parse(body, ct)
-  field_part.body |> should.equal(<<"x":utf8>>)
+  part.body(field_part) |> should.equal(<<"x":utf8>>)
 }

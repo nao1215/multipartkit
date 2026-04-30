@@ -21,7 +21,7 @@ pub fn encode(boundary: String, parts: List(Part)) -> BitArray {
   let initial = <<>>
   let body =
     list.fold(parts, initial, fn(acc, the_part) {
-      let header_block = build_header_block(the_part.headers)
+      let header_block = build_header_block(part.all_headers(the_part))
       bit_array.concat([
         acc,
         dash,
@@ -29,7 +29,7 @@ pub fn encode(boundary: String, parts: List(Part)) -> BitArray {
         crlf,
         header_block,
         crlf,
-        the_part.body,
+        part.body(the_part),
         crlf,
       ])
     })
@@ -88,7 +88,7 @@ pub fn encode_stream(
           Ok(<<"\r\n":utf8>>),
         ])
       let suffix = yielder.from_list([Ok(<<"\r\n":utf8>>)])
-      yielder.append(yielder.append(prefix, the_part.body), suffix)
+      yielder.append(yielder.append(prefix, stream.body(the_part)), suffix)
     })
   let closing =
     yielder.from_list([
@@ -101,7 +101,7 @@ pub fn encode_stream(
 }
 
 fn build_stream_header_block(stream_part: StreamPart) -> BitArray {
-  build_header_block(stream_part.headers)
+  build_header_block(stream.all_headers(stream_part))
 }
 
 fn stop_after_first_error(

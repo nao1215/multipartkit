@@ -9,7 +9,7 @@ import multipartkit/internal/bytes
 import multipartkit/internal/headers
 import multipartkit/internal/scan
 import multipartkit/limit.{type Limits}
-import multipartkit/part.{type Part, Part}
+import multipartkit/part.{type Part}
 
 /// Parse a multipart body using `default_limits()`.
 ///
@@ -32,8 +32,8 @@ pub fn parse_with_limits(
     Error(err) -> Error(err)
     Ok(boundary_value) -> {
       let total = bit_array.byte_size(body)
-      case total > limits.max_body_bytes {
-        True -> Error(BodyTooLarge(limits.max_body_bytes))
+      case total > limit.max_body_bytes(limits) {
+        True -> Error(BodyTooLarge(limit.max_body_bytes(limits)))
         False -> {
           let pattern = scan.dash_pattern(boundary_value)
           case scan.find_delimiter(body, pattern, 0) {
@@ -65,8 +65,8 @@ fn parse_loop(
         Error(_) -> Error(UnexpectedEndOfInput)
         Ok(#(blank_at, body_start)) -> {
           let header_block_size = body_start - cursor
-          case header_block_size > limits.max_header_bytes {
-            True -> Error(HeaderTooLarge(limits.max_header_bytes))
+          case header_block_size > limit.max_header_bytes(limits) {
+            True -> Error(HeaderTooLarge(limit.max_header_bytes(limits)))
             False -> {
               let header_block =
                 bytes.slice_or_empty(body, cursor, blank_at - cursor)
@@ -80,8 +80,9 @@ fn parse_loop(
                         scan.Incomplete -> Error(UnexpectedEndOfInput)
                         scan.Found(body_end_excl, kind, after_delim) -> {
                           let body_size = body_end_excl - body_start
-                          case body_size > limits.max_part_bytes {
-                            True -> Error(PartTooLarge(limits.max_part_bytes))
+                          case body_size > limit.max_part_bytes(limits) {
+                            True ->
+                              Error(PartTooLarge(limit.max_part_bytes(limits)))
                             False -> {
                               let part_body =
                                 bytes.slice_or_empty(
@@ -90,7 +91,7 @@ fn parse_loop(
                                   body_size,
                                 )
                               let new_part =
-                                Part(
+                                part.new(
                                   headers: header_list,
                                   name: meta.name,
                                   filename: meta.filename,
@@ -98,8 +99,9 @@ fn parse_loop(
                                   body: part_body,
                                 )
                               let new_count = parts_count + 1
-                              case new_count > limits.max_parts {
-                                True -> Error(TooManyParts(limits.max_parts))
+                              case new_count > limit.max_parts(limits) {
+                                True ->
+                                  Error(TooManyParts(limit.max_parts(limits)))
                                 False ->
                                   case enforce_total(after_delim, limits) {
                                     Error(err) -> Error(err)
@@ -134,8 +136,8 @@ fn parse_loop(
 }
 
 fn enforce_total(consumed: Int, limits: Limits) -> Result(Nil, MultipartError) {
-  case consumed > limits.max_body_bytes {
-    True -> Error(BodyTooLarge(limits.max_body_bytes))
+  case consumed > limit.max_body_bytes(limits) {
+    True -> Error(BodyTooLarge(limit.max_body_bytes(limits)))
     False -> Ok(Nil)
   }
 }

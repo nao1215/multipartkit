@@ -6,7 +6,7 @@ import gleeunit/should
 import multipartkit/encoder
 import multipartkit/form
 import multipartkit/parser
-import multipartkit/part.{Part}
+import multipartkit/part
 import multipartkit/stream
 
 pub fn encode_zero_parts_test() {
@@ -16,7 +16,7 @@ pub fn encode_zero_parts_test() {
 
 pub fn encode_single_field_test() {
   let part_value =
-    Part(
+    part.new(
       headers: [#("Content-Disposition", "form-data; name=\"a\"")],
       name: Some("a"),
       filename: None,
@@ -33,7 +33,7 @@ pub fn encode_emits_headers_verbatim_test() {
   // The encoder should not synthesize headers; it should emit exactly what
   // we pass.
   let part_value =
-    Part(
+    part.new(
       headers: [#("X-First", "1"), #("X-Second", "two")],
       name: None,
       filename: None,
@@ -64,11 +64,11 @@ pub fn encode_form_round_trips_test() {
     |> form.add_file("data", "x.bin", "application/octet-stream", <<1, 2, 3, 4>>)
   let #(content_type, body) = encoder.encode_form(form_value)
   let assert Ok([title_part, data_part]) = parser.parse(body, content_type)
-  title_part.name |> should.equal(Some("title"))
-  title_part.body |> should.equal(<<"ok":utf8>>)
-  data_part.filename |> should.equal(Some("x.bin"))
-  data_part.content_type |> should.equal(Some("application/octet-stream"))
-  data_part.body |> should.equal(<<1, 2, 3, 4>>)
+  part.name(title_part) |> should.equal(Some("title"))
+  part.body(title_part) |> should.equal(<<"ok":utf8>>)
+  part.filename(data_part) |> should.equal(Some("x.bin"))
+  part.content_type(data_part) |> should.equal(Some("application/octet-stream"))
+  part.body(data_part) |> should.equal(<<1, 2, 3, 4>>)
 }
 
 pub fn encode_form_generates_fresh_boundary_test() {
@@ -86,7 +86,7 @@ pub fn encode_form_generates_fresh_boundary_test() {
 
 pub fn encode_stream_round_trips_via_buffer_test() {
   let part0 =
-    Part(
+    part.new(
       headers: [#("Content-Disposition", "form-data; name=\"a\"")],
       name: Some("a"),
       filename: None,
@@ -101,8 +101,8 @@ pub fn encode_stream_round_trips_via_buffer_test() {
     Ok(bytes) -> {
       let assert Ok([parsed]) =
         parser.parse(bytes, "multipart/form-data; boundary=B")
-      parsed.name |> should.equal(Some("a"))
-      parsed.body |> should.equal(<<"v":utf8>>)
+      part.name(parsed) |> should.equal(Some("a"))
+      part.body(parsed) |> should.equal(<<"v":utf8>>)
     }
     Error(_) -> should.fail()
   }

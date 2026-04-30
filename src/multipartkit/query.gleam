@@ -20,7 +20,7 @@ pub fn field(parts: List(Part), name: String) -> Option(String) {
   case find_text_field(parts, name) {
     None -> None
     Some(found_part) ->
-      case bit_array.to_string(found_part.body) {
+      case bit_array.to_string(part.body(found_part)) {
         Ok(value) -> Some(value)
         Error(Nil) -> None
       }
@@ -36,7 +36,7 @@ pub fn required_field(
   case find_text_field(parts, name) {
     None -> Error(MissingField(name))
     Some(found_part) ->
-      case bit_array.to_string(found_part.body) {
+      case bit_array.to_string(part.body(found_part)) {
         Ok(value) -> Ok(value)
         Error(Nil) -> Error(InvalidUtf8Field(name))
       }
@@ -49,7 +49,7 @@ pub fn required_field(
 pub fn fields(parts: List(Part), name: String) -> List(String) {
   parts
   |> list.filter(fn(p) { is_text_field_named(p, name) })
-  |> list.filter_map(fn(p) { bit_array.to_string(p.body) })
+  |> list.filter_map(fn(p) { bit_array.to_string(part.body(p)) })
 }
 
 /// First file part with the given `name`. `filename = Some("")` still counts
@@ -91,7 +91,7 @@ fn collect_names(
   case remaining {
     [] -> list.reverse(acc)
     [the_part, ..rest] ->
-      case the_part.name {
+      case part.name(the_part) {
         None -> collect_names(rest, seen, acc)
         Some(name) ->
           case list.contains(seen, name) {
@@ -110,14 +110,14 @@ fn find_text_field(parts: List(Part), name: String) -> Option(Part) {
 }
 
 fn is_text_field_named(the_part: Part, name: String) -> Bool {
-  case the_part.name, the_part.filename {
+  case part.name(the_part), part.filename(the_part) {
     Some(value), None -> value == name
     _, _ -> False
   }
 }
 
 fn is_file_named(the_part: Part, name: String) -> Bool {
-  case the_part.name, the_part.filename {
+  case part.name(the_part), part.filename(the_part) {
     Some(value), Some(_) -> value == name
     _, _ -> False
   }
