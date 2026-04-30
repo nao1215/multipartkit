@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **`Limits`, `Part`, `StreamPart`, and `ContentDisposition` are now
+  `pub opaque type` (BREAKING)**. Direct constructor calls
+  (`Limits(...)`, `Part(...)`, `StreamPart(...)`,
+  `ContentDisposition(...)`) and field-access expressions
+  (`limits.max_body_bytes`, `the_part.body`, `parsed.disposition`,
+  etc.) no longer compile from outside the defining module. The
+  representation can now evolve without breaking external pattern
+  matches. Migration paths:
+
+  - `Limits` — construct with `limit.new(max_body_bytes:,
+    max_part_bytes:, max_parts:, max_header_bytes:)` (returns
+    `Result(Limits, LimitConfigError)`) or `limit.default_limits()`.
+    Read fields via the `limit.max_body_bytes/1`,
+    `limit.max_part_bytes/1`, `limit.max_parts/1`, and
+    `limit.max_header_bytes/1` accessors that already shipped in
+    v0.3.0.
+  - `Part` — construct with `part.new(headers:, name:, filename:,
+    content_type:, body:)`. Read fields via `part.all_headers/1`,
+    `part.name/1`, `part.filename/1`, `part.content_type/1`, and
+    `part.body/1`. The existing `part.header/2` and `part.headers/2`
+    case-insensitive header lookups are unchanged.
+  - `StreamPart` — receive from `stream.parse_stream` /
+    `stream.from_part`; inspect via `stream.all_headers/1`,
+    `stream.name/1`, `stream.filename/1`, `stream.content_type/1`,
+    and `stream.body/1`.
+  - `ContentDisposition` — receive from
+    `content_disposition.parse/1`; inspect via
+    `content_disposition.disposition/1`,
+    `content_disposition.name/1`, `content_disposition.filename/1`,
+    and `content_disposition.params/1`.
+
+  README and examples are updated to use the accessors. (#8)
+
 ## [0.3.0] - 2026-04-30
 
 ### Added

@@ -6,25 +6,17 @@ import gleam/result
 /// All limits are inclusive: a value equal to the limit is allowed; the
 /// `(limit + 1)`-th byte / part triggers the error.
 ///
-/// Construct via `new` (validated, recommended) or `default` (conservative
-/// presets). Direct `Limits(...)` construction stays available for
-/// trusted callers, but `new` is the supported path for any value sourced
-/// from configuration, request input, or other dynamic input.
-pub type Limits {
+/// `Limits` is an opaque type. Construct via `new` (validated,
+/// recommended) or `default_limits` (conservative presets), and inspect
+/// values through the `max_body_bytes` / `max_part_bytes` / `max_parts` /
+/// `max_header_bytes` accessor functions — direct field access was
+/// available in pre-1.0 releases but has been removed so the
+/// representation can evolve without breaking external callers.
+pub opaque type Limits {
   Limits(
-    /// Total bytes consumed from input, including boundary delimiters,
-    /// preamble, epilogue, and per-part header blocks. Triggers
-    /// `BodyTooLarge`.
     max_body_bytes: Int,
-    /// Bytes of a single part body excluding the part's header block and the
-    /// surrounding boundary lines. Triggers `PartTooLarge`.
     max_part_bytes: Int,
-    /// Maximum number of parts produced. Triggers `TooManyParts` when the
-    /// `(limit + 1)`-th part is detected.
     max_parts: Int,
-    /// Total bytes of one part's complete header block, measured from the
-    /// byte after the boundary delimiter line up to and including the blank
-    /// line that terminates the header block. Triggers `HeaderTooLarge`.
     max_header_bytes: Int,
   )
 }

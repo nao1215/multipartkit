@@ -12,7 +12,7 @@ import multipartkit/part.{type Part}
 /// Return `True` if any part is a text field with the given `name`.
 pub fn has_field(parts: List(Part), name: String) -> Bool {
   list.any(parts, fn(p) {
-    case p.name, p.filename {
+    case part.name(p), part.filename(p) {
       Some(value), None -> value == name
       _, _ -> False
     }
@@ -22,7 +22,7 @@ pub fn has_field(parts: List(Part), name: String) -> Bool {
 /// Validate that the part body does not exceed `max` bytes.
 pub fn max_file_size(the_part: Part, max: Int) -> Result(Part, MultipartError) {
   use <- bool.guard(
-    when: bit_array.byte_size(the_part.body) > max,
+    when: bit_array.byte_size(part.body(the_part)) > max,
     return: Error(PartTooLarge(max)),
   )
   Ok(the_part)
@@ -34,7 +34,7 @@ pub fn allowed_content_types(
   the_part: Part,
   allowed: List(String),
 ) -> Result(Part, MultipartError) {
-  let actual = case the_part.content_type {
+  let actual = case part.content_type(the_part) {
     Some(value) -> value
     None -> ""
   }

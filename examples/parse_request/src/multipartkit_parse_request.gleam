@@ -98,8 +98,8 @@ fn sample_body() -> BitArray {
 }
 
 fn avatar_summary(avatar: Part) -> String {
-  let size = bit_array.byte_size(avatar.body)
-  let filename = case avatar.filename {
+  let size = bit_array.byte_size(part.body(avatar))
+  let filename = case part.filename(avatar) {
     Some(value) -> value
     None -> "(none)"
   }

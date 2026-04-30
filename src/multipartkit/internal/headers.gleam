@@ -109,8 +109,11 @@ pub fn derive_meta(
           // disposition. Other dispositions (e.g. `attachment`) are still
           // surfaced with their raw headers but must not be picked up by
           // query helpers.
-          let #(name, filename) = case parsed.disposition {
-            "form-data" -> #(parsed.name, parsed.filename)
+          let #(name, filename) = case content_disposition.disposition(parsed) {
+            "form-data" -> #(
+              content_disposition.name(parsed),
+              content_disposition.filename(parsed),
+            )
             _ -> #(None, None)
           }
           Ok(DerivedMeta(name: name, filename: filename, content_type: ct))

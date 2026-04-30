@@ -3,7 +3,7 @@ import gleeunit/should
 import multipartkit/error.{
   BodyTooLarge, HeaderTooLarge, PartTooLarge, TooManyParts,
 }
-import multipartkit/limit.{Limits}
+import multipartkit/limit
 import multipartkit/parser
 
 const ct = "multipart/form-data; boundary=B"
@@ -16,8 +16,8 @@ fn one_part_body() -> BitArray {
 
 pub fn body_too_large_test() {
   let body = one_part_body()
-  let limits =
-    Limits(
+  let assert Ok(limits) =
+    limit.new(
       max_body_bytes: 5,
       max_part_bytes: 1000,
       max_parts: 100,
@@ -30,8 +30,8 @@ pub fn body_too_large_test() {
 pub fn body_at_limit_succeeds_test() {
   let body = one_part_body()
   let exact = bit_array.byte_size(body)
-  let limits =
-    Limits(
+  let assert Ok(limits) =
+    limit.new(
       max_body_bytes: exact,
       max_part_bytes: 1000,
       max_parts: 100,
@@ -45,8 +45,8 @@ pub fn body_at_limit_succeeds_test() {
 
 pub fn part_too_large_test() {
   let body = one_part_body()
-  let limits =
-    Limits(
+  let assert Ok(limits) =
+    limit.new(
       max_body_bytes: 1000,
       max_part_bytes: 4,
       max_parts: 100,
@@ -59,8 +59,8 @@ pub fn part_too_large_test() {
 
 pub fn part_at_limit_succeeds_test() {
   let body = one_part_body()
-  let limits =
-    Limits(
+  let assert Ok(limits) =
+    limit.new(
       max_body_bytes: 1000,
       max_part_bytes: 5,
       max_parts: 100,
@@ -76,8 +76,8 @@ pub fn too_many_parts_test() {
   let body = <<
     "--B\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\n1\r\n--B\r\nContent-Disposition: form-data; name=\"b\"\r\n\r\n2\r\n--B--\r\n":utf8,
   >>
-  let limits =
-    Limits(
+  let assert Ok(limits) =
+    limit.new(
       max_body_bytes: 1000,
       max_part_bytes: 1000,
       max_parts: 1,
@@ -91,8 +91,8 @@ pub fn header_too_large_test() {
   let body = <<
     "--B\r\nContent-Disposition: form-data; name=\"a\"\r\nX-Custom: very-long-header-value-here\r\n\r\nx\r\n--B--\r\n":utf8,
   >>
-  let limits =
-    Limits(
+  let assert Ok(limits) =
+    limit.new(
       max_body_bytes: 1000,
       max_part_bytes: 1000,
       max_parts: 100,
@@ -108,8 +108,8 @@ pub fn limit_includes_blank_line_terminator_test() {
   let body = <<
     "--B\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nx\r\n--B--\r\n":utf8,
   >>
-  let limits =
-    Limits(
+  let assert Ok(limits) =
+    limit.new(
       max_body_bytes: 1000,
       max_part_bytes: 1000,
       max_parts: 100,
@@ -119,8 +119,8 @@ pub fn limit_includes_blank_line_terminator_test() {
     Ok(_) -> Nil
     _ -> should.fail()
   }
-  let strict =
-    Limits(
+  let assert Ok(strict) =
+    limit.new(
       max_body_bytes: 1000,
       max_part_bytes: 1000,
       max_parts: 100,

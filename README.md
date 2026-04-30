@@ -43,6 +43,7 @@ import gleam/io
 import gleam/option.{None, Some}
 import multipartkit
 import multipartkit/form
+import multipartkit/part
 import multipartkit/query
 
 pub fn main() {
@@ -59,7 +60,7 @@ pub fn main() {
 
   io.println("Content-Type: " <> content_type)
   io.println("title=" <> title)
-  case avatar.filename {
+  case part.filename(avatar) {
     Some(filename) -> io.println("avatar filename=" <> filename)
     None -> io.println("avatar has no filename")
   }

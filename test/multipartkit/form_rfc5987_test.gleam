@@ -13,6 +13,7 @@ import multipartkit
 import multipartkit/encoder
 import multipartkit/form
 import multipartkit/parser
+import multipartkit/part
 
 // ---------------------------------------------------------------
 // ASCII-only filename: behaviour MUST be unchanged from before this
@@ -69,7 +70,7 @@ pub fn cjk_filename_round_trips_via_rfc5987_test() {
     |> form.add_file("file", "写真.png", "image/png", <<"ASCII":utf8>>)
   let #(ct, body) = multipartkit.encode_form(f)
   let assert Ok([the_part]) = parser.parse(body, ct)
-  the_part.filename |> should.equal(Some("写真.png"))
+  part.filename(the_part) |> should.equal(Some("写真.png"))
 }
 
 // ---------------------------------------------------------------
@@ -98,7 +99,7 @@ pub fn latin_filename_round_trips_test() {
     |> form.add_file("file", "Naïve.txt", "text/plain", <<"x":utf8>>)
   let #(ct, body) = multipartkit.encode_form(f)
   let assert Ok([the_part]) = parser.parse(body, ct)
-  the_part.filename |> should.equal(Some("Naïve.txt"))
+  part.filename(the_part) |> should.equal(Some("Naïve.txt"))
 }
 
 // ---------------------------------------------------------------
@@ -112,7 +113,7 @@ pub fn emoji_filename_round_trips_test() {
     |> form.add_file("file", "globe🌏.png", "image/png", <<"x":utf8>>)
   let #(ct, body) = multipartkit.encode_form(f)
   let assert Ok([the_part]) = parser.parse(body, ct)
-  the_part.filename |> should.equal(Some("globe🌏.png"))
+  part.filename(the_part) |> should.equal(Some("globe🌏.png"))
 }
 
 // ---------------------------------------------------------------
@@ -134,5 +135,5 @@ pub fn ascii_filename_with_quote_keeps_legacy_only_test() {
   // And it still round-trips:
   let #(ct, body2) = multipartkit.encode_form(f)
   let assert Ok([p]) = parser.parse(body2, ct)
-  p.filename |> should.equal(Some("a\"b.txt"))
+  part.filename(p) |> should.equal(Some("a\"b.txt"))
 }

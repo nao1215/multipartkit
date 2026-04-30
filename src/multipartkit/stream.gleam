@@ -14,22 +14,27 @@ import multipartkit/part.{type Part}
 
 /// One streamed multipart part.
 ///
-/// `body` is single-pass; once consumed it cannot be replayed. Errors that
-/// arise while reading the body (`PartTooLarge`, `UnexpectedEndOfInput`,
-/// etc.) are surfaced inline as `Error(_)` items rather than swallowed.
+/// Opaque — inspect through `headers/1`, `name/1`, `filename/1`,
+/// `content_type/1`, and `body/1`. The internal layout may evolve as
+/// the streaming surface stabilises (see issue #7 for the chunked-body
+/// follow-up) without breaking external callers.
 ///
-/// In v0.1.0 the input chunks yielder is consumed lazily, but each
-/// `StreamPart` body is materialised as a single buffered chunk before the
-/// part is yielded. The body yielder therefore always emits at most one
-/// `Ok(BitArray)` (or one `Error(_)`). Per-part memory is bounded by
-/// `max_part_bytes`. True chunk-by-chunk body streaming is on the roadmap
-/// but is not part of v0.1.0.
+/// Body semantics:
 ///
-/// Note: the spec lists `body` as `iterator.Iterator(_)`. v0.1.0 uses
-/// `gleam/yielder.Yielder(_)` because gleam_stdlib 1.0.0 dropped the
-/// `iterator` module. The streaming surface is experimental and the type
-/// may change before v1.0.0.
-pub type StreamPart {
+/// - `body/1` returns a single-pass yielder; once consumed it cannot be
+///   replayed. Errors that arise while reading the body
+///   (`PartTooLarge`, `UnexpectedEndOfInput`, etc.) are surfaced inline
+///   as `Error(_)` items rather than swallowed.
+/// - In the current release each `StreamPart` body is materialised as a
+///   single buffered chunk before the part is yielded. The body yielder
+///   therefore always emits at most one `Ok(BitArray)` (or one
+///   `Error(_)`). Per-part memory is bounded by `max_part_bytes`. True
+///   chunk-by-chunk body streaming is on the roadmap.
+///
+/// Note: the public spec describes `body` as `iterator.Iterator(_)`.
+/// The current implementation uses `gleam/yielder.Yielder(_)` because
+/// gleam_stdlib 1.0.0 dropped the `iterator` module.
+pub opaque type StreamPart {
   StreamPart(
     headers: List(#(String, String)),
     name: Option(String),
@@ -37,6 +42,36 @@ pub type StreamPart {
     content_type: Option(String),
     body: Yielder(Result(BitArray, MultipartError)),
   )
+}
+
+/// All headers as `(name, value)` pairs in input order.
+pub fn all_headers(stream_part: StreamPart) -> List(#(String, String)) {
+  stream_part.headers
+}
+
+/// The convenience `name` field derived from `Content-Disposition` for
+/// `form-data` parts, or `None`.
+pub fn name(stream_part: StreamPart) -> Option(String) {
+  stream_part.name
+}
+
+/// The convenience `filename` field derived from `Content-Disposition`
+/// for `form-data` parts, or `None`.
+pub fn filename(stream_part: StreamPart) -> Option(String) {
+  stream_part.filename
+}
+
+/// The `Content-Type` header value, or `None`.
+pub fn content_type(stream_part: StreamPart) -> Option(String) {
+  stream_part.content_type
+}
+
+/// The single-pass body yielder. See the type-level doc for streaming
+/// semantics.
+pub fn body(
+  stream_part: StreamPart,
+) -> Yielder(Result(BitArray, MultipartError)) {
+  stream_part.body
 }
 
 /// Parse a stream of input chunks using `default_limits()`.
@@ -149,7 +184,8 @@ fn step_find_first(
       case pull_chunk(state) {
         Pulled(next) -> step_find_first(next)
         Exhausted -> halt_with(state, UnexpectedEndOfInput)
-        OverBody -> halt_with(state, BodyTooLarge(state.limits.max_body_bytes))
+        OverBody ->
+          halt_with(state, BodyTooLarge(limit.max_body_bytes(state.limits)))
       }
   }
 }
@@ -164,7 +200,8 @@ fn step_produce_next(
       case pull_chunk(state) {
         Pulled(next) -> step_produce_next(next)
         Exhausted -> halt_with(state, UnexpectedEndOfInput)
-        OverBody -> halt_with(state, BodyTooLarge(state.limits.max_body_bytes))
+        OverBody ->
+          halt_with(state, BodyTooLarge(limit.max_body_bytes(state.limits)))
       }
   }
 }
@@ -185,7 +222,7 @@ fn pull_chunk(state: StreamState) -> PullOutcome {
         yielder.Next(chunk, rest) -> {
           let size = bit_array.byte_size(chunk)
           let new_pulled = state.bytes_pulled + size
-          case new_pulled > state.limits.max_body_bytes {
+          case new_pulled > limit.max_body_bytes(state.limits) {
             True -> OverBody
             False ->
               Pulled(
@@ -215,8 +252,8 @@ fn finalise_headers(
   body_start: Int,
 ) -> PartOutcome {
   let header_block_size = body_start - state.cursor
-  case header_block_size > state.limits.max_header_bytes {
-    True -> Failed(HeaderTooLarge(state.limits.max_header_bytes))
+  case header_block_size > limit.max_header_bytes(state.limits) {
+    True -> Failed(HeaderTooLarge(limit.max_header_bytes(state.limits)))
     False -> {
       let header_block =
         bytes.slice_or_empty(state.buf, state.cursor, blank_at - state.cursor)
@@ -263,12 +300,12 @@ fn finalise_part(
   meta: internal_headers.DerivedMeta,
 ) -> PartOutcome {
   let body_size = body_end_excl - body_start
-  case body_size > state.limits.max_part_bytes {
-    True -> Failed(PartTooLarge(state.limits.max_part_bytes))
+  case body_size > limit.max_part_bytes(state.limits) {
+    True -> Failed(PartTooLarge(limit.max_part_bytes(state.limits)))
     False -> {
       let new_count = state.parts_count + 1
-      case new_count > state.limits.max_parts {
-        True -> Failed(TooManyParts(state.limits.max_parts))
+      case new_count > limit.max_parts(state.limits) {
+        True -> Failed(TooManyParts(limit.max_parts(state.limits)))
         False -> {
           let part_body = bytes.slice_or_empty(state.buf, body_start, body_size)
           let stream_part =
@@ -318,11 +355,11 @@ fn compact_buffer(state: StreamState) -> StreamState {
 /// buffered parse result into the streaming API surface.
 pub fn from_part(the_part: Part) -> StreamPart {
   StreamPart(
-    headers: the_part.headers,
-    name: the_part.name,
-    filename: the_part.filename,
-    content_type: the_part.content_type,
-    body: yielder.from_list([Ok(the_part.body)]),
+    headers: part.all_headers(the_part),
+    name: part.name(the_part),
+    filename: part.filename(the_part),
+    content_type: part.content_type(the_part),
+    body: yielder.from_list([Ok(part.body(the_part))]),
   )
 }
 

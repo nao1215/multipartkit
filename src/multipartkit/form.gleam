@@ -5,7 +5,7 @@ import gleam/option.{None, Some}
 import gleam/result
 import gleam/string
 import multipartkit/infer
-import multipartkit/part.{type Part, Part}
+import multipartkit/part.{type Part}
 
 /// Opaque builder for multipart/form-data messages.
 ///
@@ -37,7 +37,7 @@ pub fn add_field(form: Form, name: String, value: String) -> Form {
     "form-data; name=" <> quote(safe_name),
   )
   let new_part =
-    Part(
+    part.new(
       headers: [disposition],
       name: Some(safe_name),
       filename: None,
@@ -142,7 +142,7 @@ fn build_file_part(
       <> filename_disposition_params(safe_filename),
   )
   let content_type_header = #("Content-Type", safe_content_type)
-  Part(
+  part.new(
     headers: [disposition_header, content_type_header],
     name: Some(safe_name),
     filename: Some(safe_filename),

@@ -7,7 +7,7 @@ import multipartkit/error.{
   InvalidContentType, MissingBoundary, PartTooLarge, UnexpectedEndOfInput,
   UnsupportedMediaType,
 }
-import multipartkit/limit.{Limits}
+import multipartkit/limit
 import multipartkit/stream
 
 const ct = "multipart/form-data; boundary=B"
@@ -66,8 +66,8 @@ pub fn parse_stream_yields_parts_test() {
   let items = drain_parts(stream_yielder)
   case items {
     [Ok(stream_part)] -> {
-      stream_part.name |> should.equal(Some("a"))
-      let assert Ok(body) = stream.drain_body(stream_part.body)
+      stream.name(stream_part) |> should.equal(Some("a"))
+      let assert Ok(body) = stream.drain_body(stream.body(stream_part))
       body |> should.equal(<<"hello":utf8>>)
     }
     _ -> should.fail()
@@ -81,8 +81,8 @@ pub fn parse_stream_handles_chunk_boundaries_test() {
   let assert Ok(stream_yielder) = stream.parse_stream(chunks, ct)
   case drain_parts(stream_yielder) {
     [Ok(stream_part)] -> {
-      stream_part.name |> should.equal(Some("a"))
-      let assert Ok(body_bytes) = stream.drain_body(stream_part.body)
+      stream.name(stream_part) |> should.equal(Some("a"))
+      let assert Ok(body_bytes) = stream.drain_body(stream.body(stream_part))
       body_bytes |> should.equal(<<"hello":utf8>>)
     }
     _ -> should.fail()
@@ -110,8 +110,8 @@ pub fn parse_stream_two_parts_in_input_order_test() {
   let assert Ok(stream_yielder) = stream.parse_stream(chunks, ct)
   case drain_parts(stream_yielder) {
     [Ok(p1), Ok(p2)] -> {
-      p1.name |> should.equal(Some("a"))
-      p2.name |> should.equal(Some("b"))
+      stream.name(p1) |> should.equal(Some("a"))
+      stream.name(p2) |> should.equal(Some("b"))
     }
     _ -> should.fail()
   }
@@ -129,10 +129,10 @@ pub fn parse_stream_skip_undrained_body_test() {
     |> list.filter_map(fn(item) { item })
   case items {
     [first, second] -> {
-      first.name |> should.equal(Some("a"))
-      second.name |> should.equal(Some("b"))
+      stream.name(first) |> should.equal(Some("a"))
+      stream.name(second) |> should.equal(Some("b"))
       // Now drain the second body — it should give "second".
-      let assert Ok(body_bytes) = stream.drain_body(second.body)
+      let assert Ok(body_bytes) = stream.drain_body(stream.body(second))
       body_bytes |> should.equal(<<"second":utf8>>)
     }
     _ -> should.fail()
@@ -153,11 +153,12 @@ pub fn parse_stream_pulls_chunks_lazily_test() {
   let assert Ok(stream_yielder) = stream.parse_stream(chunks, ct)
   case yielder.step(stream_yielder) {
     yielder.Next(Ok(first), rest) -> {
-      first.name |> should.equal(Some("a"))
+      stream.name(first) |> should.equal(Some("a"))
       // The remaining yielder should still produce part `b` after pulling
       // chunk_b on demand.
       case yielder.step(rest) {
-        yielder.Next(Ok(second), _) -> second.name |> should.equal(Some("b"))
+        yielder.Next(Ok(second), _) ->
+          stream.name(second) |> should.equal(Some("b"))
         _ -> should.fail()
       }
     }
@@ -175,8 +176,8 @@ pub fn parse_stream_body_too_large_caught_incrementally_test() {
   >>
   let huge = <<"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa":utf8>>
   let chunks = yielder.from_list([chunk_a, chunk_b, huge])
-  let limits =
-    Limits(
+  let assert Ok(limits) =
+    limit.new(
       max_body_bytes: 30,
       max_part_bytes: 1000,
       max_parts: 100,
@@ -192,8 +193,8 @@ pub fn parse_stream_body_too_large_caught_incrementally_test() {
 
 pub fn parse_stream_with_limits_propagates_part_too_large_test() {
   let chunks = yielder.from_list([one_part_body()])
-  let limits =
-    Limits(
+  let assert Ok(limits) =
+    limit.new(
       max_body_bytes: 1000,
       max_part_bytes: 2,
       max_parts: 100,

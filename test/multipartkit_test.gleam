@@ -3,6 +3,8 @@ import gleeunit
 import gleeunit/should
 import multipartkit
 import multipartkit/form
+import multipartkit/limit
+import multipartkit/part
 import multipartkit/query
 
 pub fn main() -> Nil {
@@ -23,20 +25,20 @@ pub fn facade_round_trip_test() {
   |> should.equal(Ok("hello"))
 
   let assert Ok(file_part) = query.required_file(parts, "avatar")
-  file_part.body
+  part.body(file_part)
   |> should.equal(<<1, 2, 3>>)
-  file_part.filename
+  part.filename(file_part)
   |> should.equal(Some("a.bin"))
 }
 
 pub fn default_limits_facade_test() {
   let limits = multipartkit.default_limits()
-  limits.max_body_bytes
+  limit.max_body_bytes(limits)
   |> should.equal(10_000_000)
-  limits.max_part_bytes
+  limit.max_part_bytes(limits)
   |> should.equal(5_000_000)
-  limits.max_parts
+  limit.max_parts(limits)
   |> should.equal(100)
-  limits.max_header_bytes
+  limit.max_header_bytes(limits)
   |> should.equal(16_384)
 }

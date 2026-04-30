@@ -59,11 +59,11 @@ fn run_happy() -> Result(Nil, MultipartError) {
 }
 
 fn describe_part(stream_part: stream.StreamPart) -> Nil {
-  let label = case stream_part.name {
+  let label = case stream.name(stream_part) {
     Some(name) -> name
     None -> "(no name)"
   }
-  case stream.drain_body(stream_part.body) {
+  case stream.drain_body(stream.body(stream_part)) {
     Ok(body) -> io.println("- " <> label <> " — " <> describe_body(body))
     Error(_) -> io.println("- " <> label <> " (body errored)")
   }
