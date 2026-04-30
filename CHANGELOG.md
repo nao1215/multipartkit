@@ -27,6 +27,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Streaming parser stabilises with chunked body emission and
+  incremental `max_part_bytes`**. `StreamPart.body` now surfaces large
+  parts as a sequence of fixed-size `Ok(BitArray)` items (up to ~64 KiB
+  each) instead of a single buffered chunk, so consumers can fold over
+  a multi-megabyte part without first materialising the entire body as
+  one application-level `BitArray` (small parts still fit in a single
+  chunk, and `stream.drain_body` continues to fold the yielder back
+  into one buffer). `parse_stream` and `parse_stream_with_limits` also
+  enforce `max_part_bytes` incrementally during body parsing — an
+  oversized single part is now rejected at the chunk that crosses the
+  per-part limit, not after the whole part has been buffered.
+  `stream.from_part` adapts buffered parts into the same chunked
+  yielder shape so that mixed pipelines see a uniform body surface.
+  README and the `streaming_parse` example are updated and the
+  "single buffered chunk" caveat has been removed. (#7)
+
 - **`Limits`, `Part`, `StreamPart`, and `ContentDisposition` are now
   `pub opaque type` (BREAKING)**. Direct constructor calls
   (`Limits(...)`, `Part(...)`, `StreamPart(...)`,
