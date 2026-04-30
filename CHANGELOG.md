@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Golden wire fixtures for the encoder, parser, and streaming
+  parser** in `test/multipartkit/golden_fixtures_test.gleam`. Each
+  fixture pins the exact bytes of a representative multipart body
+  and asserts the property called out in the issue:
+  - canonical form-data with a text field plus a binary file part
+  - non-ASCII filenames using RFC 5987 `filename*` (parser prefers
+    `*=` over the legacy fallback per RFC 5987 §3.2.2)
+  - the streaming parser is invariant under chunk-split shape
+    (single chunk, byte-by-byte, split inside a header block, split
+    inside a part body)
+  - malformed inputs whose error variant (`UnexpectedEndOfInput`,
+    `InvalidContentDisposition`) is part of the contract
+  Closes a gap where wire-formatting shifts (header order, quoting
+  style, CRLF placement, `filename*` precedence) could land without
+  a single per-property assertion noticing. (#11)
+
 ### Changed
 
 - **`Limits`, `Part`, `StreamPart`, and `ContentDisposition` are now
