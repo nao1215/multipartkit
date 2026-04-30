@@ -1,5 +1,5 @@
 name = "multipartkit"
-version = "0.3.0"
+version = "0.4.0"
 description = "Multipart body parsing and generation primitives for Gleam on Erlang and JavaScript targets"
 licences = ["MIT"]
 repository = { type = "github", user = "nao1215", repo = "multipartkit" }
