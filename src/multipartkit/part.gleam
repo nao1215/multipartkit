@@ -5,9 +5,12 @@ import multipartkit/internal/text
 /// A parsed multipart part.
 ///
 /// Opaque — construct with `new/5` (or receive from `parser.parse`) and
-/// inspect through `headers/1`, `name/1`, `filename/1`, `content_type/1`,
-/// and `body/1`. The internal layout may evolve to cache more derived
-/// fields without breaking external callers.
+/// inspect through `all_headers/1`, `name/1`, `filename/1`,
+/// `content_type/1`, and `body/1`. The case-insensitive
+/// `header(part, name)` and `headers(part, name)` helpers below are the
+/// supported way to look up a header value by name. The internal
+/// layout may evolve to cache more derived fields without breaking
+/// external callers.
 ///
 /// Header semantics on the headers list:
 ///

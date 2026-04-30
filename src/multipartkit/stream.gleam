@@ -14,7 +14,7 @@ import multipartkit/part.{type Part}
 
 /// One streamed multipart part.
 ///
-/// Opaque — inspect through `headers/1`, `name/1`, `filename/1`,
+/// Opaque — inspect through `all_headers/1`, `name/1`, `filename/1`,
 /// `content_type/1`, and `body/1`. The internal layout may evolve as
 /// the streaming surface stabilises (see issue #7 for the chunked-body
 /// follow-up) without breaking external callers.
