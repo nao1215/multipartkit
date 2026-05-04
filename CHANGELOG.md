@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-04
+
+### Documentation
+
+- **readme**: `gleam add multipartkit` is the only step on the main
+  install path now. The extra `gleam add gleam_yielder` line moved into
+  the streaming-specific section, where it is actually needed. (#18)
+
+### Changed
+
+- **query**: `query.field` now wraps `query.required_field` so the
+  find-the-text-field-and-decode-utf8 logic only exists once. The
+  result is funneled through `option.from_result` to satisfy glinter's
+  `thrown_away_error` rule. Public behavior unchanged. (#18)
+
 ## [0.4.0] - 2026-04-30
 
 ### Added
