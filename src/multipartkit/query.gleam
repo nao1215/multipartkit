@@ -17,14 +17,8 @@ import multipartkit/part.{type Part}
 /// `None` is returned. Use `required_field` if you need to distinguish
 /// "missing" from "present but not UTF-8".
 pub fn field(parts: List(Part), name: String) -> Option(String) {
-  case find_text_field(parts, name) {
-    None -> None
-    Some(found_part) ->
-      case bit_array.to_string(part.body(found_part)) {
-        Ok(value) -> Some(value)
-        Error(Nil) -> None
-      }
-  }
+  required_field(parts, name)
+  |> option.from_result
 }
 
 /// Strict variant of `field`. Returns `MissingField` if no text field

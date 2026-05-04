@@ -25,12 +25,9 @@ target: `multipart/form-data`. Secondary: `multipart/mixed` and
 gleam add multipartkit
 ```
 
-For the streaming API you also need
-[`gleam_yielder`](https://hex.pm/packages/gleam_yielder):
-
-```sh
-gleam add gleam_yielder
-```
+That is all the non-streaming API needs. The streaming parser pulls in
+one extra package; see [Streaming semantics](#streaming-semantics) for
+the install step and the wiring.
 
 ## Quick start
 
@@ -87,6 +84,14 @@ gleam run
 Run them all from the repo root with `just examples`.
 
 ## Streaming semantics
+
+The streaming parser is opt-in. Add it to your project only when you
+need chunk-at-a-time parsing — the normal full-body API in the Quick
+start above does not depend on it.
+
+```sh
+gleam add gleam_yielder
+```
 
 `parse_stream` pulls input chunks lazily and enforces `max_body_bytes`
 and `max_part_bytes` incrementally, so an oversized stream — or an
