@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-05
+
 ### Documentation
 
 - **readme**: extend the Quick start snippet with `part.body(avatar)` and
