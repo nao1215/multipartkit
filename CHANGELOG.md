@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Documentation
+
+- **readme**: extend the Quick start snippet with `part.body(avatar)` and
+  print the byte size of the parsed file part. New users no longer have
+  to grep `multipartkit/part` to find the BitArray accessor. The
+  `examples/quick_start` source is updated in lockstep so the
+  README/example byte-equality check still passes. (#21)
+
 ## [0.5.0] - 2026-05-04
 
 ### Documentation

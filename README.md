@@ -36,6 +36,8 @@ copy it into `src/main.gleam`, run `gleam add multipartkit`, then
 `gleam run`.
 
 ```gleam
+import gleam/bit_array
+import gleam/int
 import gleam/io
 import gleam/option.{None, Some}
 import multipartkit
@@ -61,6 +63,8 @@ pub fn main() {
     Some(filename) -> io.println("avatar filename=" <> filename)
     None -> io.println("avatar has no filename")
   }
+  let avatar_bytes = part.body(avatar)
+  io.println("avatar size=" <> int.to_string(bit_array.byte_size(avatar_bytes)))
 }
 ```
 
