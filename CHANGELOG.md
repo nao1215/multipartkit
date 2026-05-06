@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- `multipartkit.parse/2` (and the streaming parser, which shares the
+  same delimiter scanner) now accepts RFC 2046 §5.1.1
+  `transport-padding` — `*LWSP-char` (spaces or tabs) between the
+  boundary token and the trailing CRLF/LF (or `--` for the closing
+  delimiter). Previously the scanner only matched `--<boundary>\r\n`
+  exactly, so a body whose opening delimiter was `--BND  \r\n`
+  parsed as `Ok([])` (empty multipart) and silently swallowed every
+  part. Cross-vendor wires routinely arrive with non-zero padding
+  (some HTTP intermediaries inject it for line-length normalisation),
+  so the scanner now follows the RFC. The same change covers the
+  inter-part delimiter and the close-delimiter
+  (`--<boundary>--<padding>\r\n`). (#24)
+
 ## [0.6.0] - 2026-05-05
 
 ### Documentation
