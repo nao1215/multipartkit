@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-06
+
 ### Fixed
 - `multipartkit.parse/2` (and the streaming parser, which shares the
   same delimiter scanner) now accepts RFC 2046 §5.1.1
