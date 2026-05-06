@@ -106,38 +106,61 @@ type AfterClass {
 fn classify_after(buf: BitArray, at: Int, total: Int) -> AfterClass {
   case at >= total {
     True -> ClassIncomplete
-    False ->
-      case bit_array.slice(buf, at, 2) {
+    False -> {
+      // RFC 2046 §5.1.1 transport-padding := *LWSP-char between the
+      // boundary token and the line ending (or `--` for the closing
+      // delimiter). Spaces and tabs only.
+      let after_padding = skip_lwsp(buf, at, total)
+      case bit_array.slice(buf, after_padding, 2) {
         Ok(<<"--":utf8>>) ->
-          ClassClosing(consume_closing_tail(buf, at + 2, total))
-        Ok(<<"\r\n":utf8>>) -> ClassDelimiter(at + 2)
-        Ok(<<10, _>>) -> ClassDelimiter(at + 1)
+          ClassClosing(consume_closing_tail(buf, after_padding + 2, total))
+        Ok(<<"\r\n":utf8>>) -> ClassDelimiter(after_padding + 2)
+        Ok(<<10, _>>) -> ClassDelimiter(after_padding + 1)
         _ ->
-          case bit_array.slice(buf, at, 1) {
-            Ok(<<10>>) -> ClassDelimiter(at + 1)
+          case bit_array.slice(buf, after_padding, 1) {
+            Ok(<<10>>) -> ClassDelimiter(after_padding + 1)
             Ok(_) -> {
-              case at + 2 > total {
+              case after_padding + 2 > total {
                 True -> ClassIncomplete
                 False -> ClassInvalid
               }
             }
-            Error(Nil) -> ClassIncomplete
+            Error(Nil) -> {
+              case after_padding >= total {
+                True -> ClassIncomplete
+                False -> ClassInvalid
+              }
+            }
+          }
+      }
+    }
+  }
+}
+
+fn consume_closing_tail(buf: BitArray, at: Int, total: Int) -> Int {
+  let after_padding = skip_lwsp(buf, at, total)
+  case after_padding >= total {
+    True -> after_padding
+    False ->
+      case bit_array.slice(buf, after_padding, 2) {
+        Ok(<<"\r\n":utf8>>) -> after_padding + 2
+        _ ->
+          case bit_array.slice(buf, after_padding, 1) {
+            Ok(<<10>>) -> after_padding + 1
+            _ -> after_padding
           }
       }
   }
 }
 
-fn consume_closing_tail(buf: BitArray, at: Int, total: Int) -> Int {
+fn skip_lwsp(buf: BitArray, at: Int, total: Int) -> Int {
   case at >= total {
     True -> at
     False ->
-      case bit_array.slice(buf, at, 2) {
-        Ok(<<"\r\n":utf8>>) -> at + 2
-        _ ->
-          case bit_array.slice(buf, at, 1) {
-            Ok(<<10>>) -> at + 1
-            _ -> at
-          }
+      case bit_array.slice(buf, at, 1) {
+        Ok(<<32>>) -> skip_lwsp(buf, at + 1, total)
+        Ok(<<9>>) -> skip_lwsp(buf, at + 1, total)
+        _ -> at
       }
   }
 }
