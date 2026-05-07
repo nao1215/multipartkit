@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-05-07
+
 ### Added
 - **`part.equal_on_wire/2`** and **`part.list_equal_on_wire/2`** —
   structural equality predicates that compare two `Part` values (or
