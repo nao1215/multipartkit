@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **`Part.new/5` now strips RFC 7230 §3.2.4 OWS** (space and
+  horizontal tab) from the surrounding edges of every header value
+  at construction time, mirroring what the parser does on the wire
+  side. Previously, `Part.new(headers: [#("X-Foo", " spaced")], ...)`
+  stored the value verbatim, but `encode → parse` produced
+  `Some("spaced")` — the in-memory `Part` was no longer equal to
+  itself across a wire round-trip. This was a property-test
+  reliability problem (`forall_round_trip` would always fail) and
+  forced consumers to wrap `Part` equality with a normalising
+  projection. Whitespace *inside* a value (between tokens) is part
+  of the data and is preserved verbatim. The constructor uses an
+  RFC-7230-specific OWS predicate (only `0x20` and `0x09`) rather
+  than `string.trim`, which would also strip Unicode whitespace.
+  This is a behaviour change for `Part` values that explicitly
+  carried surrounding whitespace; the wire image already lost that
+  data — the in-memory model now matches. (#29)
+
 ### Security
 - **multipart CRLF / NUL injection in `Part.new/5`** —
   `multipartkit/part.new/5` now validates header names and values
