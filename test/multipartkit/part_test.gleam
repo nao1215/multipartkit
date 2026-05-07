@@ -188,6 +188,117 @@ pub fn new_round_trips_through_encode_parse_test() {
   part.header(original, "X-Foo") |> should.equal(Some("spaced"))
 }
 
+pub fn equal_on_wire_true_when_headers_and_body_match_test() {
+  // #27: two parts with identical headers + body but different cache
+  // fields (`name`, `filename`, `content_type`) compare equal on
+  // the wire.
+  let assert Ok(a) =
+    part.new(
+      headers: [#("Content-Disposition", "form-data; name=\"a\"")],
+      name: None,
+      filename: None,
+      content_type: None,
+      body: <<"hello":utf8>>,
+    )
+  let assert Ok(b) =
+    part.new(
+      headers: [#("Content-Disposition", "form-data; name=\"a\"")],
+      name: Some("a"),
+      filename: None,
+      content_type: None,
+      body: <<"hello":utf8>>,
+    )
+  // Structural `==` differs because `name` is None vs Some("a").
+  // `equal_on_wire` ignores that and returns True.
+  part.equal_on_wire(a, b) |> should.be_true
+}
+
+pub fn equal_on_wire_false_on_different_body_test() {
+  let assert Ok(a) =
+    part.new(
+      headers: [#("X-Foo", "v")],
+      name: None,
+      filename: None,
+      content_type: None,
+      body: <<"a":utf8>>,
+    )
+  let assert Ok(b) =
+    part.new(
+      headers: [#("X-Foo", "v")],
+      name: None,
+      filename: None,
+      content_type: None,
+      body: <<"b":utf8>>,
+    )
+  part.equal_on_wire(a, b) |> should.be_false
+}
+
+pub fn equal_on_wire_false_on_different_headers_test() {
+  let assert Ok(a) =
+    part.new(
+      headers: [#("X-Foo", "1")],
+      name: None,
+      filename: None,
+      content_type: None,
+      body: <<>>,
+    )
+  let assert Ok(b) =
+    part.new(
+      headers: [#("X-Foo", "2")],
+      name: None,
+      filename: None,
+      content_type: None,
+      body: <<>>,
+    )
+  part.equal_on_wire(a, b) |> should.be_false
+}
+
+pub fn equal_on_wire_is_order_sensitive_on_headers_test() {
+  // RFC 7230 says repeated header names preserve relative order, so
+  // wire equality must reject reordered headers.
+  let assert Ok(a) =
+    part.new(
+      headers: [#("X-Trace", "first"), #("X-Trace", "second")],
+      name: None,
+      filename: None,
+      content_type: None,
+      body: <<>>,
+    )
+  let assert Ok(b) =
+    part.new(
+      headers: [#("X-Trace", "second"), #("X-Trace", "first")],
+      name: None,
+      filename: None,
+      content_type: None,
+      body: <<>>,
+    )
+  part.equal_on_wire(a, b) |> should.be_false
+}
+
+pub fn list_equal_on_wire_pairwise_test() {
+  let assert Ok(a) =
+    part.new(
+      headers: [#("X", "v")],
+      name: None,
+      filename: None,
+      content_type: None,
+      body: <<"x":utf8>>,
+    )
+  let assert Ok(b) =
+    part.new(
+      headers: [#("X", "v")],
+      name: Some("ignored"),
+      filename: None,
+      content_type: None,
+      body: <<"x":utf8>>,
+    )
+  part.list_equal_on_wire([a], [b]) |> should.be_true
+  part.list_equal_on_wire([], []) |> should.be_true
+  part.list_equal_on_wire([a], []) |> should.be_false
+  part.list_equal_on_wire([], [a]) |> should.be_false
+  part.list_equal_on_wire([a, a], [a]) |> should.be_false
+}
+
 pub fn header_lookup_uses_ascii_only_case_folding_test() {
   // Locale-sensitive lowercase folds Turkish I-with-dot to a lowercase i, but
   // ASCII case-insensitive comparison should not. Make sure non-ASCII names

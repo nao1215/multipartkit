@@ -210,6 +210,42 @@ pub fn headers(part: Part, name: String) -> List(String) {
   find_header(part.headers, name)
 }
 
+/// Structural equality on the wire-level content of two `Part` values.
+///
+/// Compares the headers list (preserving order, with case-sensitive
+/// name matching that mirrors RFC 7578 §4.2) and the body bytes. The
+/// convenience cache fields — `name`, `filename`, `content_type` — are
+/// intentionally ignored because they are derived from the headers
+/// and may differ between a `Part.new/5`-constructed value (where the
+/// caller passes the cache) and a parsed `Part` (where the parser
+/// derives the cache from `Content-Disposition` / `Content-Type`).
+/// Two `Part`s that `equal_on_wire` returns `True` for will encode
+/// to the same bytes via `multipartkit.encode/2` (modulo the
+/// boundary string, which is supplied at encode time).
+///
+/// Use this for property-style round-trip tests where the caller
+/// passes one `Part` shape into the encoder and gets another
+/// (cache-derived) shape back from the parser.
+pub fn equal_on_wire(a: Part, b: Part) -> Bool {
+  a.headers == b.headers && a.body == b.body
+}
+
+/// `equal_on_wire` lifted over a pair of `Part` lists. Returns `True`
+/// when the lists have the same length and every paired element
+/// satisfies `equal_on_wire`.
+pub fn list_equal_on_wire(a: List(Part), b: List(Part)) -> Bool {
+  case a, b {
+    [], [] -> True
+    [], _ -> False
+    _, [] -> False
+    [first_a, ..rest_a], [first_b, ..rest_b] ->
+      case equal_on_wire(first_a, first_b) {
+        True -> list_equal_on_wire(rest_a, rest_b)
+        False -> False
+      }
+  }
+}
+
 fn find_header(headers: List(#(String, String)), name: String) -> List(String) {
   list.filter_map(headers, fn(entry) {
     case text.equals_ci(entry.0, name) {

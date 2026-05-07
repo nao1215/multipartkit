@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **`part.equal_on_wire/2`** and **`part.list_equal_on_wire/2`** —
+  structural equality predicates that compare two `Part` values (or
+  two `Part` lists) by their wire-level content. The comparison
+  preserves header order and uses case-sensitive header-name
+  matching (mirroring RFC 7578 §4.2), and intentionally ignores the
+  convenience cache fields (`name`, `filename`, `content_type`)
+  because those are derived from the headers and may differ between
+  a `Part.new/5`-constructed value and a parsed `Part` even when
+  the wire image is byte-identical. Previously, every consumer that
+  wanted "do these encode to the same bytes?" had to project to
+  `(all_headers, body)` themselves; multipartkit now owns that
+  equality so the right RFC interpretation lives in one place and
+  consumers can keep the projection out of property-test code. (#27)
+
 ### Fixed
 - **`Part.new/5` now strips RFC 7230 §3.2.4 OWS** (space and
   horizontal tab) from the surrounding edges of every header value
