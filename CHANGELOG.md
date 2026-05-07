@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-05-08
+
 ### Security
 - **`encoder.encode/2` and `multipartkit.encode/2` now validate the
   caller-supplied boundary** against RFC 2046 §5.1.1 before producing
@@ -14,13 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   raw bytes verbatim, so a caller who built the boundary from data
   (request id, user-agent fragment, etc.) could produce a wire image
   whose framing bytes contain `CR` / `LF` / `--BOUNDARY` collisions and
-  splice forged headers ahead of the first real part. The encode-side
-  companion to the existing `Part.new/5` header guard (#28). The
-  validator that already lived in `multipartkit/header` (and that the
-  *parse* path consulted) is now wired into the *encode* path too —
-  one source of truth, one rejection set. `encoder.encode_stream/2`
-  surfaces the same diagnostic on the first emission of the returned
-  yielder. (#34)
+  splice forged headers ahead of the first real part. This release adds
+  the encode-side companion to the existing `Part.new/5` header guard
+  (#28): the validator that already lived in `multipartkit/header` (and
+  that the *parse* path consulted) is now wired into the *encode* path
+  too — one source of truth, one rejection set.
+  `encoder.encode_stream/2` surfaces the same diagnostic on the first
+  emission of the returned yielder. (#34)
 
 ### Changed
 - **Breaking (`encoder.encode/2`, `multipartkit.encode/2`)**: now
