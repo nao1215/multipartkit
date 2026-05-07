@@ -77,8 +77,8 @@ pub fn encoder_emits_canonical_form_data_body_test() {
       content_type: Some("text/plain"),
       body: <<0xDE, 0xAD, 0xBE, 0xEF>>,
     )
-  encoder.encode("B", [title, avatar])
-  |> should.equal(fixture_form_data_body)
+  let assert Ok(body) = encoder.encode("B", [title, avatar])
+  body |> should.equal(fixture_form_data_body)
 }
 
 pub fn parser_round_trips_canonical_form_data_body_test() {

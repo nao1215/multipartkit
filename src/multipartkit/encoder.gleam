@@ -4,17 +4,36 @@ import gleam/int
 import gleam/list
 import gleam/result
 import gleam/yielder.{type Yielder}
-import multipartkit/error.{type MultipartError}
+import multipartkit/error.{type MultipartError, InvalidBoundary}
 import multipartkit/form.{type Form}
+import multipartkit/header
 import multipartkit/part.{type Part}
 import multipartkit/stream.{type StreamPart}
 
 /// Encode parts using the supplied boundary.
 ///
-/// The boundary must satisfy the RFC 2046 grammar; otherwise the resulting
-/// message will be invalid. To keep this function pure and total, the encoder
-/// does not validate the boundary.
-pub fn encode(boundary: String, parts: List(Part)) -> BitArray {
+/// `boundary` is validated against RFC 2046 §5.1.1 before any bytes are
+/// produced; a value that contains CR / LF / NUL / other non-`bchars`,
+/// is empty, or exceeds 70 chars surfaces as `Error(InvalidBoundary(value))`
+/// so callers cannot accidentally emit a wire image whose framing bytes
+/// inject forged headers (the encode-side companion to the header CRLF
+/// guard in `Part.new/5`).
+pub fn encode(
+  boundary: String,
+  parts: List(Part),
+) -> Result(BitArray, MultipartError) {
+  use <- bool.guard(
+    when: !header.validate_boundary(boundary),
+    return: Error(InvalidBoundary(boundary)),
+  )
+  Ok(encode_validated(boundary, parts))
+}
+
+/// Internal: encode parts assuming `boundary` is already RFC-valid.
+/// The only callers are `encode/2` (which validates first) and
+/// `encode_form/1` (whose boundary is produced by `generate_boundary`
+/// and is RFC-valid by construction).
+fn encode_validated(boundary: String, parts: List(Part)) -> BitArray {
   let dash = <<"--":utf8>>
   let crlf = <<"\r\n":utf8>>
   let boundary_bytes = bit_array.from_string(boundary)
@@ -62,16 +81,34 @@ fn build_header_block(headers: List(#(String, String))) -> BitArray {
 /// invariants.
 pub fn encode_form(the_form: Form) -> #(String, BitArray) {
   let boundary = generate_boundary()
-  let body = encode(boundary, form.parts(the_form))
+  // generate_boundary returns a valid RFC 2046 boundary by construction
+  // (alphanumeric, length 41), so we skip the validation hop.
+  let body = encode_validated(boundary, form.parts(the_form))
   let content_type = "multipart/form-data; boundary=" <> boundary
   #(content_type, body)
 }
 
 /// Encode a stream of `StreamPart`s into a yielder of byte chunks.
 ///
+/// `boundary` is validated against RFC 2046 §5.1.1 up-front; an invalid
+/// boundary makes the returned yielder produce a single
+/// `Error(InvalidBoundary(value))` and then exhaust, mirroring the
+/// `encode/2` guard.
+///
 /// Errors propagated from a `StreamPart`'s body iterator are forwarded as
 /// `Error(_)`. After the first error, the yielder is exhausted.
 pub fn encode_stream(
+  boundary: String,
+  parts: Yielder(StreamPart),
+) -> Yielder(Result(BitArray, MultipartError)) {
+  case header.validate_boundary(boundary) {
+    False -> yielder.from_list([Error(InvalidBoundary(boundary))])
+    True -> encode_stream_validated(boundary, parts)
+  }
+}
+
+/// Internal: stream-encode parts assuming `boundary` is already RFC-valid.
+fn encode_stream_validated(
   boundary: String,
   parts: Yielder(StreamPart),
 ) -> Yielder(Result(BitArray, MultipartError)) {

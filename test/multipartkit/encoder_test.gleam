@@ -10,8 +10,8 @@ import multipartkit/part
 import multipartkit/stream
 
 pub fn encode_zero_parts_test() {
-  encoder.encode("B", [])
-  |> should.equal(<<"--B--\r\n":utf8>>)
+  let assert Ok(body) = encoder.encode("B", [])
+  body |> should.equal(<<"--B--\r\n":utf8>>)
 }
 
 pub fn encode_single_field_test() {
@@ -23,7 +23,8 @@ pub fn encode_single_field_test() {
       content_type: None,
       body: <<"hi":utf8>>,
     )
-  encoder.encode("B", [part_value])
+  let assert Ok(body) = encoder.encode("B", [part_value])
+  body
   |> should.equal(<<
     "--B\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nhi\r\n--B--\r\n":utf8,
   >>)
@@ -40,7 +41,8 @@ pub fn encode_emits_headers_verbatim_test() {
       content_type: None,
       body: <<"body":utf8>>,
     )
-  encoder.encode("B", [part_value])
+  let assert Ok(body) = encoder.encode("B", [part_value])
+  body
   |> should.equal(<<
     "--B\r\nX-First: 1\r\nX-Second: two\r\n\r\nbody\r\n--B--\r\n":utf8,
   >>)

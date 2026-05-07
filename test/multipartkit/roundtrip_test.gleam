@@ -27,7 +27,7 @@ pub fn parse_then_encode_then_parse_test() {
       body: <<0, 0xFE, 1, 2>>,
     )
   let parts = [p1, p2]
-  let bytes = encoder.encode("ROUND", parts)
+  let assert Ok(bytes) = encoder.encode("ROUND", parts)
   let assert Ok(reparsed) = parser.parse(bytes, ct)
   reparsed |> should.equal(parts)
 }
@@ -42,9 +42,9 @@ pub fn encode_canonical_then_parse_byte_identical_test() {
       body: <<"x":utf8>>,
     )
   let parts = [p]
-  let first = encoder.encode("ROUND", parts)
+  let assert Ok(first) = encoder.encode("ROUND", parts)
   let assert Ok(reparsed) = parser.parse(first, ct)
-  let second = encoder.encode("ROUND", reparsed)
+  let assert Ok(second) = encoder.encode("ROUND", reparsed)
   first |> should.equal(second)
 }
 
@@ -58,7 +58,7 @@ pub fn empty_body_round_trip_test() {
       body: <<>>,
     )
   let parts = [p]
-  let bytes = encoder.encode("ROUND", parts)
+  let assert Ok(bytes) = encoder.encode("ROUND", parts)
   let assert Ok(reparsed) = parser.parse(bytes, ct)
   reparsed |> should.equal(parts)
 }
