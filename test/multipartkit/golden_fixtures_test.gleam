@@ -55,7 +55,7 @@ const fixture_form_data_body: BitArray = <<
 >>
 
 pub fn encoder_emits_canonical_form_data_body_test() {
-  let title =
+  let assert Ok(title) =
     part.new(
       headers: [#("Content-Disposition", "form-data; name=\"title\"")],
       name: Some("title"),
@@ -63,7 +63,7 @@ pub fn encoder_emits_canonical_form_data_body_test() {
       content_type: None,
       body: <<"hi":utf8>>,
     )
-  let avatar =
+  let assert Ok(avatar) =
     part.new(
       headers: [
         #(

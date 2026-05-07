@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+- **multipart CRLF / NUL injection in `Part.new/5`** —
+  `multipartkit/part.new/5` now validates header names and values
+  before constructing a `Part` and returns
+  `Result(Part, MultipartError)` instead of `Part`. Header values
+  containing `\r`, `\n`, or NUL are rejected with
+  `Error(InvalidHeaderValue(name, value))`; header names containing
+  any of those bytes or a `:` are rejected with
+  `Error(InvalidHeaderName(name))`. Previously, an attacker who
+  controlled a header value could smuggle additional header lines
+  into the encoded wire image — the multipart variant of CRLF
+  response splitting (RFC 9110 §5.5 disallows these bytes in
+  `field-value`). Two new variants in `MultipartError`,
+  `InvalidHeaderName` and `InvalidHeaderValue`, surface the rejection.
+  Internal callers (`form.add_field`, `form.add_file*`,
+  `parser.parse`) already sanitise or pre-validate their input and
+  use a new `@internal` `part.unchecked_new` helper that skips the
+  check; no behaviour change for callers of the `form` builder. (#28)
+
+### Breaking change (security fix)
+- `Part.new/5` signature is now
+  `Result(Part, MultipartError)` instead of `Part`. Existing
+  call sites must `use part <- result.try(part.new(...))` (or
+  `let assert Ok(part) = part.new(...)` when input is statically
+  safe). The bug closed by this change is severe enough to justify
+  a major bump on its own.
+
 ## [0.7.0] - 2026-05-06
 
 ### Fixed

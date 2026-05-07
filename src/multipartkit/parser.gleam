@@ -91,7 +91,7 @@ fn parse_loop(
                                   body_size,
                                 )
                               let new_part =
-                                part.new(
+                                part.unchecked_new(
                                   headers: header_list,
                                   name: meta.name,
                                   filename: meta.filename,
