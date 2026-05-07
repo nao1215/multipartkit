@@ -104,7 +104,11 @@ fn read_parameter(
   }
 }
 
-fn validate_boundary(value: String) -> Bool {
+/// Returns `True` when `value` satisfies the RFC 2046 §5.1.1 `boundary`
+/// grammar (1-70 `bchars` ending in a `bcharsnospace`). Used by `boundary/1`
+/// on the parse side and by the encoder on the encode side so both ends
+/// reject the same set of strings.
+pub fn validate_boundary(value: String) -> Bool {
   let length = string.length(value)
   case length >= 1 && length <= 70 {
     False -> False

@@ -25,7 +25,7 @@ pub fn ascii_filename_keeps_legacy_form_only_test() {
   let f =
     form.new()
     |> form.add_file("file", "doc.pdf", "application/pdf", <<"PDF":utf8>>)
-  let body = encoder.encode("bnd", form.parts(f))
+  let assert Ok(body) = encoder.encode("bnd", form.parts(f))
   let assert Ok(body_str) = bit_array.to_string(body)
   string.contains(body_str, "filename=\"doc.pdf\"")
   |> should.be_true
@@ -45,7 +45,7 @@ pub fn cjk_filename_emits_both_legacy_and_rfc5987_test() {
   let f =
     form.new()
     |> form.add_file("file", "写真.png", "image/png", <<"ASCII":utf8>>)
-  let body = encoder.encode("bnd", form.parts(f))
+  let assert Ok(body) = encoder.encode("bnd", form.parts(f))
   let assert Ok(body_str) = bit_array.to_string(body)
   // Must NOT contain the raw CJK bytes inside the header any more.
   string.contains(body_str, "filename=\"写真.png\"")
@@ -84,7 +84,7 @@ pub fn latin_supplement_filename_emits_rfc5987_test() {
   let f =
     form.new()
     |> form.add_file("file", "Naïve.txt", "text/plain", <<"x":utf8>>)
-  let body = encoder.encode("bnd", form.parts(f))
+  let assert Ok(body) = encoder.encode("bnd", form.parts(f))
   let assert Ok(body_str) = bit_array.to_string(body)
   string.contains(body_str, "filename*=UTF-8''Na%C3%AFve.txt")
   |> should.be_true
@@ -126,7 +126,7 @@ pub fn ascii_filename_with_quote_keeps_legacy_only_test() {
   let f =
     form.new()
     |> form.add_file("file", "a\"b.txt", "text/plain", <<"x":utf8>>)
-  let body = encoder.encode("bnd", form.parts(f))
+  let assert Ok(body) = encoder.encode("bnd", form.parts(f))
   let assert Ok(body_str) = bit_array.to_string(body)
   string.contains(body_str, "filename=\"a\\\"b.txt\"")
   |> should.be_true
