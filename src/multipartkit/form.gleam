@@ -37,7 +37,7 @@ pub fn add_field(form: Form, name: String, value: String) -> Form {
     "form-data; name=" <> quote(safe_name),
   )
   let new_part =
-    part.new(
+    part.unchecked_new(
       headers: [disposition],
       name: Some(safe_name),
       filename: None,
@@ -142,7 +142,7 @@ fn build_file_part(
       <> filename_disposition_params(safe_filename),
   )
   let content_type_header = #("Content-Type", safe_content_type)
-  part.new(
+  part.unchecked_new(
     headers: [disposition_header, content_type_header],
     name: Some(safe_name),
     filename: Some(safe_filename),

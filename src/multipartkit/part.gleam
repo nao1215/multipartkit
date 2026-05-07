@@ -1,5 +1,11 @@
+import gleam/bool
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/result
+import gleam/string
+import multipartkit/error.{
+  type MultipartError, InvalidHeaderName, InvalidHeaderValue,
+}
 import multipartkit/internal/text
 
 /// A parsed multipart part.
@@ -39,11 +45,45 @@ pub opaque type Part {
   )
 }
 
-/// Construct a `Part`. The `name`, `filename`, and `content_type` fields
-/// are not re-derived from the `headers` list — pass the values you
-/// expect callers to see, or use `parser.parse` for automatic
-/// derivation.
+/// Construct a `Part`.
+///
+/// The `name`, `filename`, and `content_type` fields are not re-derived
+/// from the `headers` list — pass the values you expect callers to see,
+/// or use `parser.parse` for automatic derivation.
+///
+/// Header names and values are validated to prevent CRLF / NUL injection
+/// into the encoded wire image. A header value that contains `\r`, `\n`,
+/// or NUL would otherwise let an attacker who controls the value smuggle
+/// additional header lines into the encoded part — the multipart variant
+/// of CRLF response splitting (RFC 9110 §5.5 disallows these bytes in
+/// `field-value`). Header names additionally cannot contain `:` (would
+/// split the header at parse time). The constructor rejects these inputs
+/// with `Error(InvalidHeaderName(_))` / `Error(InvalidHeaderValue(_, _))`
+/// rather than silently emitting an off-spec wire image.
 pub fn new(
+  headers headers: List(#(String, String)),
+  name name: Option(String),
+  filename filename: Option(String),
+  content_type content_type: Option(String),
+  body body: BitArray,
+) -> Result(Part, MultipartError) {
+  use _ <- result.try(validate_headers(headers))
+  Ok(Part(
+    headers: headers,
+    name: name,
+    filename: filename,
+    content_type: content_type,
+    body: body,
+  ))
+}
+
+/// Internal escape hatch — skips header-injection validation. Used by
+/// `multipartkit/form` and the parser, both of which sanitise or
+/// already-validated their inputs before constructing the `Part`. NOT
+/// part of the public surface; the `@internal` attribute keeps it out
+/// of the rendered docs and signals the contract to other tooling.
+@internal
+pub fn unchecked_new(
   headers headers: List(#(String, String)),
   name name: Option(String),
   filename filename: Option(String),
@@ -57,6 +97,42 @@ pub fn new(
     content_type: content_type,
     body: body,
   )
+}
+
+fn validate_headers(
+  headers: List(#(String, String)),
+) -> Result(Nil, MultipartError) {
+  case headers {
+    [] -> Ok(Nil)
+    [#(name, value), ..rest] -> {
+      use <- bool.guard(
+        when: !valid_header_name(name),
+        return: Error(InvalidHeaderName(name)),
+      )
+      use <- bool.guard(
+        when: !valid_header_value(value),
+        return: Error(InvalidHeaderValue(name, value)),
+      )
+      validate_headers(rest)
+    }
+  }
+}
+
+fn valid_header_name(name: String) -> Bool {
+  !{
+    string.contains(name, "\r")
+    || string.contains(name, "\n")
+    || string.contains(name, "\u{0000}")
+    || string.contains(name, ":")
+  }
+}
+
+fn valid_header_value(value: String) -> Bool {
+  !{
+    string.contains(value, "\r")
+    || string.contains(value, "\n")
+    || string.contains(value, "\u{0000}")
+  }
 }
 
 /// All headers as `(name, value)` pairs in input order.

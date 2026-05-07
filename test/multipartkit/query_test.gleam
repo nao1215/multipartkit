@@ -5,33 +5,39 @@ import multipartkit/part.{type Part}
 import multipartkit/query
 
 fn text_part(name: String, body: BitArray) -> Part {
-  part.new(
-    headers: [],
-    name: Some(name),
-    filename: None,
-    content_type: None,
-    body: body,
-  )
+  let assert Ok(p) =
+    part.new(
+      headers: [],
+      name: Some(name),
+      filename: None,
+      content_type: None,
+      body: body,
+    )
+  p
 }
 
 fn file_part(name: String, filename: String, body: BitArray) -> Part {
-  part.new(
-    headers: [],
-    name: Some(name),
-    filename: Some(filename),
-    content_type: None,
-    body: body,
-  )
+  let assert Ok(p) =
+    part.new(
+      headers: [],
+      name: Some(name),
+      filename: Some(filename),
+      content_type: None,
+      body: body,
+    )
+  p
 }
 
 fn anonymous_part(body: BitArray) -> Part {
-  part.new(
-    headers: [],
-    name: None,
-    filename: None,
-    content_type: None,
-    body: body,
-  )
+  let assert Ok(p) =
+    part.new(
+      headers: [],
+      name: None,
+      filename: None,
+      content_type: None,
+      body: body,
+    )
+  p
 }
 
 pub fn field_returns_first_match_test() {

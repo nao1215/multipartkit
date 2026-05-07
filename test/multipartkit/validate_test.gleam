@@ -5,13 +5,15 @@ import multipartkit/part.{type Part}
 import multipartkit/validate
 
 fn build_part(name: String, ct: Option(String), body: BitArray) -> Part {
-  part.new(
-    headers: [],
-    name: Some(name),
-    filename: None,
-    content_type: ct,
-    body: body,
-  )
+  let assert Ok(p) =
+    part.new(
+      headers: [],
+      name: Some(name),
+      filename: None,
+      content_type: ct,
+      body: body,
+    )
+  p
 }
 
 pub fn has_field_true_test() {

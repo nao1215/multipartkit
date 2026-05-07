@@ -80,7 +80,7 @@ pub fn add_file_auto_with_bytes_inferer_fallback_test() {
 }
 
 pub fn unsafe_add_part_inserts_verbatim_test() {
-  let manual =
+  let assert Ok(manual) =
     part.new(
       headers: [#("X-Custom", "v")],
       name: None,

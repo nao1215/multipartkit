@@ -15,7 +15,7 @@ pub fn encode_zero_parts_test() {
 }
 
 pub fn encode_single_field_test() {
-  let part_value =
+  let assert Ok(part_value) =
     part.new(
       headers: [#("Content-Disposition", "form-data; name=\"a\"")],
       name: Some("a"),
@@ -32,7 +32,7 @@ pub fn encode_single_field_test() {
 pub fn encode_emits_headers_verbatim_test() {
   // The encoder should not synthesize headers; it should emit exactly what
   // we pass.
-  let part_value =
+  let assert Ok(part_value) =
     part.new(
       headers: [#("X-First", "1"), #("X-Second", "two")],
       name: None,
@@ -85,7 +85,7 @@ pub fn encode_form_generates_fresh_boundary_test() {
 }
 
 pub fn encode_stream_round_trips_via_buffer_test() {
-  let part0 =
+  let assert Ok(part0) =
     part.new(
       headers: [#("Content-Disposition", "form-data; name=\"a\"")],
       name: Some("a"),
