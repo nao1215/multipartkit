@@ -67,9 +67,9 @@ pub fn new(
   content_type content_type: Option(String),
   body body: BitArray,
 ) -> Result(Part, MultipartError) {
-  use _ <- result.try(validate_headers(headers))
+  use normalised <- result.try(validate_and_normalise_headers(headers, []))
   Ok(Part(
-    headers: headers,
+    headers: normalised,
     name: name,
     filename: filename,
     content_type: content_type,
@@ -99,11 +99,19 @@ pub fn unchecked_new(
   )
 }
 
-fn validate_headers(
+/// Walk the input header list, rejecting CRLF / NUL injection attempts
+/// and stripping RFC 7230 §3.2.4 OWS (space and horizontal tab) from the
+/// surrounding edges of each value. The OWS stripping mirrors what the
+/// parser does on the wire side, so a `Part` constructed with
+/// `[#("X-Foo", " spaced ")]` round-trips equal to itself through
+/// `encode → parse`. The returned list preserves the input order so
+/// `all_headers` / `headers` keep their documented "wire order" property.
+fn validate_and_normalise_headers(
   headers: List(#(String, String)),
-) -> Result(Nil, MultipartError) {
+  acc: List(#(String, String)),
+) -> Result(List(#(String, String)), MultipartError) {
   case headers {
-    [] -> Ok(Nil)
+    [] -> Ok(list.reverse(acc))
     [#(name, value), ..rest] -> {
       use <- bool.guard(
         when: !valid_header_name(name),
@@ -113,9 +121,32 @@ fn validate_headers(
         when: !valid_header_value(value),
         return: Error(InvalidHeaderValue(name, value)),
       )
-      validate_headers(rest)
+      validate_and_normalise_headers(rest, [#(name, trim_ows(value)), ..acc])
     }
   }
+}
+
+/// Strip RFC 7230 §3.2.4 OWS — space (0x20) and horizontal tab (0x09) —
+/// from both ends of `value`. Mirrors what the parser strips on the wire
+/// side; using `string.trim` would also strip Unicode whitespace, which
+/// is over-broad for an HTTP-style header.
+fn trim_ows(value: String) -> String {
+  value |> drop_leading_ows |> drop_trailing_ows
+}
+
+fn drop_leading_ows(value: String) -> String {
+  case string.pop_grapheme(value) {
+    Ok(#(" ", rest)) | Ok(#("\t", rest)) -> drop_leading_ows(rest)
+    _ -> value
+  }
+}
+
+fn drop_trailing_ows(value: String) -> String {
+  use <- bool.guard(
+    when: !{ string.ends_with(value, " ") || string.ends_with(value, "\t") },
+    return: value,
+  )
+  drop_trailing_ows(string.drop_end(value, 1))
 }
 
 fn valid_header_name(name: String) -> Bool {

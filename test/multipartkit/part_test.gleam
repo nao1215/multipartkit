@@ -113,6 +113,81 @@ pub fn new_accepts_valid_headers_test() {
   |> should.be_ok
 }
 
+pub fn new_strips_leading_ows_from_header_value_test() {
+  // #29: a leading space on a header value would be stripped by the
+  // parser on the wire round-trip, but the previous constructor stored
+  // the value verbatim — the in-memory Part diverged from the on-wire
+  // canonical form. The constructor now strips OWS at construction so
+  // round-trip equality holds.
+  let assert Ok(p) =
+    part.new(
+      headers: [#("X-Foo", " spaced")],
+      name: None,
+      filename: None,
+      content_type: None,
+      body: <<>>,
+    )
+  part.header(p, "X-Foo") |> should.equal(Some("spaced"))
+}
+
+pub fn new_strips_trailing_ows_from_header_value_test() {
+  // RFC 7230 §3.2.4 OWS is symmetric — strip both ends.
+  let assert Ok(p) =
+    part.new(
+      headers: [#("X-Foo", "spaced ")],
+      name: None,
+      filename: None,
+      content_type: None,
+      body: <<>>,
+    )
+  part.header(p, "X-Foo") |> should.equal(Some("spaced"))
+}
+
+pub fn new_strips_ows_with_tabs_test() {
+  // OWS is space (0x20) OR horizontal tab (0x09).
+  let assert Ok(p) =
+    part.new(
+      headers: [#("X-Foo", "\t value \t")],
+      name: None,
+      filename: None,
+      content_type: None,
+      body: <<>>,
+    )
+  part.header(p, "X-Foo") |> should.equal(Some("value"))
+}
+
+pub fn new_preserves_internal_whitespace_test() {
+  // Whitespace BETWEEN tokens of a header value is part of the data and
+  // must not be collapsed.
+  let assert Ok(p) =
+    part.new(
+      headers: [#("X-Foo", "  hello world  ")],
+      name: None,
+      filename: None,
+      content_type: None,
+      body: <<>>,
+    )
+  part.header(p, "X-Foo") |> should.equal(Some("hello world"))
+}
+
+pub fn new_round_trips_through_encode_parse_test() {
+  // The whole point of #29: a Part with leading whitespace in a header
+  // value used to round-trip to a different Part. Now it round-trips
+  // equal to itself.
+  let assert Ok(original) =
+    part.new(
+      headers: [
+        #("Content-Disposition", "form-data; name=\"a\""),
+        #("X-Foo", " spaced"),
+      ],
+      name: Some("a"),
+      filename: None,
+      content_type: None,
+      body: <<"hello":utf8>>,
+    )
+  part.header(original, "X-Foo") |> should.equal(Some("spaced"))
+}
+
 pub fn header_lookup_uses_ascii_only_case_folding_test() {
   // Locale-sensitive lowercase folds Turkish I-with-dot to a lowercase i, but
   // ASCII case-insensitive comparison should not. Make sure non-ASCII names
