@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **`part.new/5`** now synthesises the `Content-Disposition` and / or
+  `Content-Type` headers on the way through the constructor when the
+  caller passes `name` / `filename` / `content_type` cache values without
+  the matching header entry in `headers`. Previously those parameters
+  were stored as memos only — the encoded wire image omitted the
+  corresponding header lines, so a `multipartkit.encode |> parse`
+  round-trip dropped `name`, `filename`, and `content_type` to `None`.
+  The synthesised `Content-Disposition` value uses the same shape that
+  `multipartkit/form.add_field` and `add_file` emit (legacy
+  `filename="..."` for ASCII filenames, RFC 5987 `filename*=UTF-8''...`
+  with an ASCII fallback for non-ASCII filenames). When the relevant
+  header is already present in `headers`, the caller's explicit value
+  wins — synthesis does not duplicate or replace it. The existing CRLF
+  / NUL guard now also applies to `name`, `filename`, and `content_type`
+  because they may be promoted to header values; offending inputs
+  surface as `Error(InvalidHeaderValue("Content-Disposition" |
+  "Content-Type", value))` rather than silently emitting an off-spec
+  wire image. (#37)
+
 ## [0.9.0] - 2026-05-08
 
 ### Security

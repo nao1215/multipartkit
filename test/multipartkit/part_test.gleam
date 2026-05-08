@@ -1,6 +1,8 @@
 import gleam/option.{None, Some}
 import gleeunit/should
+import multipartkit/encoder
 import multipartkit/error.{InvalidHeaderName, InvalidHeaderValue}
+import multipartkit/parser
 import multipartkit/part.{type Part}
 
 fn sample() -> Part {
@@ -276,9 +278,16 @@ pub fn equal_on_wire_is_order_sensitive_on_headers_test() {
 }
 
 pub fn list_equal_on_wire_pairwise_test() {
+  // Both parts carry the same `Content-Disposition` on the headers list,
+  // so synthesis is a no-op for both regardless of the `name` cache.
+  // `equal_on_wire` ignores the cache and the headers / body match —
+  // pairwise list equality therefore returns True.
   let assert Ok(a) =
     part.new(
-      headers: [#("X", "v")],
+      headers: [
+        #("Content-Disposition", "form-data; name=\"ignored\""),
+        #("X", "v"),
+      ],
       name: None,
       filename: None,
       content_type: None,
@@ -286,7 +295,10 @@ pub fn list_equal_on_wire_pairwise_test() {
     )
   let assert Ok(b) =
     part.new(
-      headers: [#("X", "v")],
+      headers: [
+        #("Content-Disposition", "form-data; name=\"ignored\""),
+        #("X", "v"),
+      ],
       name: Some("ignored"),
       filename: None,
       content_type: None,
@@ -297,6 +309,154 @@ pub fn list_equal_on_wire_pairwise_test() {
   part.list_equal_on_wire([a], []) |> should.be_false
   part.list_equal_on_wire([], [a]) |> should.be_false
   part.list_equal_on_wire([a, a], [a]) |> should.be_false
+}
+
+pub fn new_synthesises_content_disposition_when_name_is_some_test() {
+  // #37: a `Part` constructed with `name: Some("code")` and an empty
+  // `headers` list used to encode without a `Content-Disposition` line,
+  // so a parse-after-encode round trip dropped `name` to `None`. The
+  // constructor now prepends a `Content-Disposition: form-data; name=...`
+  // header so the cache survives the round trip.
+  let assert Ok(p) =
+    part.new(
+      headers: [],
+      name: Some("code"),
+      filename: None,
+      content_type: None,
+      body: <<"hi":utf8>>,
+    )
+  part.header(p, "Content-Disposition")
+  |> should.equal(Some("form-data; name=\"code\""))
+}
+
+pub fn new_synthesises_content_disposition_with_filename_test() {
+  // When both `name` and `filename` are passed, the synthesised
+  // `Content-Disposition` carries the filename parameter too — same
+  // shape `multipartkit/form.add_file` would have written.
+  let assert Ok(p) =
+    part.new(
+      headers: [],
+      name: Some("upload"),
+      filename: Some("a.bin"),
+      content_type: None,
+      body: <<>>,
+    )
+  part.header(p, "Content-Disposition")
+  |> should.equal(Some("form-data; name=\"upload\"; filename=\"a.bin\""))
+}
+
+pub fn new_synthesises_filename_star_for_non_ascii_test() {
+  // Non-ASCII filenames must use the RFC 5987 `filename*=UTF-8''...`
+  // form (with an ASCII fallback in the legacy slot) — same encoding
+  // `multipartkit/form.add_file` uses.
+  let assert Ok(p) =
+    part.new(
+      headers: [],
+      name: Some("upload"),
+      filename: Some("日本語.txt"),
+      content_type: None,
+      body: <<>>,
+    )
+  part.header(p, "Content-Disposition")
+  |> should.equal(Some(
+    "form-data; name=\"upload\"; filename=\"___.txt\"; filename*=UTF-8''%E6%97%A5%E6%9C%AC%E8%AA%9E.txt",
+  ))
+}
+
+pub fn new_synthesises_content_type_when_some_test() {
+  let assert Ok(p) =
+    part.new(
+      headers: [],
+      name: None,
+      filename: None,
+      content_type: Some("text/plain"),
+      body: <<>>,
+    )
+  part.header(p, "Content-Type") |> should.equal(Some("text/plain"))
+}
+
+pub fn new_does_not_synthesise_when_header_already_present_test() {
+  // The caller's explicit `Content-Disposition` header wins — synthesis
+  // does NOT replace or duplicate it. Same for `Content-Type`.
+  let assert Ok(p) =
+    part.new(
+      headers: [
+        #("Content-Disposition", "attachment; filename=\"raw.bin\""),
+        #("Content-Type", "application/x-custom"),
+      ],
+      name: Some("ignored"),
+      filename: Some("ignored.bin"),
+      content_type: Some("text/plain"),
+      body: <<>>,
+    )
+  part.headers(p, "Content-Disposition")
+  |> should.equal(["attachment; filename=\"raw.bin\""])
+  part.headers(p, "Content-Type") |> should.equal(["application/x-custom"])
+}
+
+pub fn new_does_not_synthesise_disposition_when_only_filename_is_some_test() {
+  // RFC 7578 §4.2 requires `name=` on form-data parts. Without `name`
+  // there is no valid Content-Disposition shape to synthesise, so the
+  // headers list stays empty and `filename` is kept as a cache only.
+  let assert Ok(p) =
+    part.new(
+      headers: [],
+      name: None,
+      filename: Some("only.bin"),
+      content_type: None,
+      body: <<>>,
+    )
+  part.all_headers(p) |> should.equal([])
+  part.filename(p) |> should.equal(Some("only.bin"))
+}
+
+pub fn new_round_trip_preserves_name_filename_content_type_test() {
+  // The exact reproducer from #37: a `Part` built with cache values and
+  // an empty `headers` list now survives `encode |> parse` with the
+  // cache intact.
+  let assert Ok(original) =
+    part.new(
+      headers: [],
+      name: Some("code"),
+      filename: None,
+      content_type: Some("text/plain"),
+      body: <<"hello":utf8>>,
+    )
+  let assert Ok(wire) = encoder.encode("BOUNDARY42", [original])
+  let assert Ok([parsed]) =
+    parser.parse(wire, "multipart/form-data; boundary=BOUNDARY42")
+  part.name(parsed) |> should.equal(Some("code"))
+  part.content_type(parsed) |> should.equal(Some("text/plain"))
+  part.body(parsed) |> should.equal(<<"hello":utf8>>)
+}
+
+pub fn new_rejects_lf_in_synthesised_name_test() {
+  // The CR / LF / NUL guard applies to `name` because the constructor
+  // promotes it to a `Content-Disposition` header value when the header
+  // is absent; allowing CR / LF would inject an additional header line.
+  part.new(
+    headers: [],
+    name: Some("ok\nX-Injected: bad"),
+    filename: None,
+    content_type: None,
+    body: <<>>,
+  )
+  |> should.equal(
+    Error(InvalidHeaderValue("Content-Disposition", "ok\nX-Injected: bad")),
+  )
+}
+
+pub fn new_rejects_crlf_in_synthesised_content_type_test() {
+  part.new(
+    headers: [],
+    name: None,
+    filename: None,
+    content_type: Some("text/plain\r\nX-Injected: bad"),
+    body: <<>>,
+  )
+  |> should.equal(
+    Error(InvalidHeaderValue("Content-Type", "text/plain\r\nX-Injected: bad")),
+  )
 }
 
 pub fn header_lookup_uses_ascii_only_case_folding_test() {
