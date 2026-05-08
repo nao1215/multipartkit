@@ -6,6 +6,7 @@ import gleam/string
 import multipartkit/error.{
   type MultipartError, InvalidHeaderName, InvalidHeaderValue,
 }
+import multipartkit/internal/disposition
 import multipartkit/internal/text
 
 /// A parsed multipart part.
@@ -33,8 +34,9 @@ import multipartkit/internal/text
 ///
 /// `name`, `filename`, and `content_type` are convenience caches derived from
 /// `Content-Disposition` and `Content-Type` headers per the field/file
-/// detection rules. They are not re-derived automatically when a caller
-/// constructs a `Part` manually with `new/5`.
+/// detection rules. When `new/5` is given non-`None` cache values without
+/// the corresponding header entry in `headers`, the header is synthesised
+/// so the cached value also appears on the wire (see `new/5` for details).
 pub opaque type Part {
   Part(
     headers: List(#(String, String)),
@@ -47,9 +49,26 @@ pub opaque type Part {
 
 /// Construct a `Part`.
 ///
-/// The `name`, `filename`, and `content_type` fields are not re-derived
-/// from the `headers` list — pass the values you expect callers to see,
-/// or use `parser.parse` for automatic derivation.
+/// The `name`, `filename`, and `content_type` parameters double as wire
+/// instructions: when one of them is `Some(_)` and the corresponding header
+/// is absent from `headers`, the constructor synthesises the missing header
+/// (matching the shape `multipartkit/form.add_field` / `add_file` would
+/// emit) so the cached value also appears in the encoded wire image and
+/// survives a `multipartkit.encode |> multipartkit.parse` round trip.
+///
+/// Synthesis rules:
+///
+/// - `name: Some(n)` and no `Content-Disposition` header → prepends
+///   `Content-Disposition: form-data; name="n"` (with `; filename=...`
+///   appended when `filename` is also `Some(_)`, using the RFC 5987
+///   `filename*=` form for non-ASCII filenames).
+/// - `content_type: Some(ct)` and no `Content-Type` header → prepends
+///   `Content-Type: ct`.
+/// - `filename: Some(_)` without `name` does not synthesise a
+///   `Content-Disposition` (RFC 7578 §4.2 requires `name`); the value is
+///   stored as the cache only.
+/// - When the relevant header IS present in `headers`, the constructor
+///   leaves the headers list untouched — the caller's explicit header wins.
 ///
 /// Header names and values are validated to prevent CRLF / NUL injection
 /// into the encoded wire image. A header value that contains `\r`, `\n`,
@@ -57,9 +76,12 @@ pub opaque type Part {
 /// additional header lines into the encoded part — the multipart variant
 /// of CRLF response splitting (RFC 9110 §5.5 disallows these bytes in
 /// `field-value`). Header names additionally cannot contain `:` (would
-/// split the header at parse time). The constructor rejects these inputs
-/// with `Error(InvalidHeaderName(_))` / `Error(InvalidHeaderValue(_, _))`
-/// rather than silently emitting an off-spec wire image.
+/// split the header at parse time). The same CRLF / NUL guard applies to
+/// `name`, `filename`, and `content_type` because they may be promoted to
+/// header values by the synthesis rules above. The constructor rejects
+/// these inputs with `Error(InvalidHeaderName(_))` /
+/// `Error(InvalidHeaderValue(_, _))` rather than silently emitting an
+/// off-spec wire image.
 pub fn new(
   headers headers: List(#(String, String)),
   name name: Option(String),
@@ -68,8 +90,13 @@ pub fn new(
   body body: BitArray,
 ) -> Result(Part, MultipartError) {
   use normalised <- result.try(validate_and_normalise_headers(headers, []))
+  use _ <- result.try(reject_breaking_bytes("Content-Disposition", name))
+  use _ <- result.try(reject_breaking_bytes("Content-Disposition", filename))
+  use _ <- result.try(reject_breaking_bytes("Content-Type", content_type))
+  let synthesised =
+    synthesise_missing_headers(normalised, name, filename, content_type)
   Ok(Part(
-    headers: normalised,
+    headers: synthesised,
     name: name,
     filename: filename,
     content_type: content_type,
@@ -123,6 +150,77 @@ fn validate_and_normalise_headers(
       )
       validate_and_normalise_headers(rest, [#(name, trim_ows(value)), ..acc])
     }
+  }
+}
+
+/// If `value` is `Some(v)` and `v` contains a CR / LF / NUL byte, surface
+/// it as `InvalidHeaderValue(header_name, v)` so the user sees the same
+/// error shape they would get for the raw header pair. `header_name` is
+/// the wire header that synthesis would derive from this parameter
+/// (`Content-Disposition` for `name` / `filename`, `Content-Type` for
+/// `content_type`); reusing it makes the error point at the actual
+/// failure mode without inventing a new error variant.
+fn reject_breaking_bytes(
+  header_name: String,
+  value: Option(String),
+) -> Result(Nil, MultipartError) {
+  case value {
+    None -> Ok(Nil)
+    Some(v) ->
+      case disposition.has_header_breaking_bytes(v) {
+        True -> Error(InvalidHeaderValue(header_name, v))
+        False -> Ok(Nil)
+      }
+  }
+}
+
+/// Prepend `Content-Disposition` (when `name` is `Some(_)` and missing
+/// from `existing`) and `Content-Type` (when `content_type` is `Some(_)`
+/// and missing from `existing`) to mirror what the wire-side parser would
+/// derive from those headers. Header order is `[Content-Disposition,
+/// Content-Type, ...existing]`, matching what `multipartkit/form.add_file`
+/// emits.
+fn synthesise_missing_headers(
+  existing: List(#(String, String)),
+  name: Option(String),
+  filename: Option(String),
+  content_type: Option(String),
+) -> List(#(String, String)) {
+  let with_content_type = case content_type {
+    None -> existing
+    Some(ct) ->
+      case has_header_ci(existing, "content-type") {
+        True -> existing
+        False -> [#("Content-Type", ct), ..existing]
+      }
+  }
+  case name {
+    None -> with_content_type
+    Some(n) ->
+      case has_header_ci(with_content_type, "content-disposition") {
+        True -> with_content_type
+        False -> [
+          #(
+            "Content-Disposition",
+            disposition.build_form_data_value(n, filename),
+          ),
+          ..with_content_type
+        ]
+      }
+  }
+}
+
+fn has_header_ci(
+  headers: List(#(String, String)),
+  lowercase_name: String,
+) -> Bool {
+  case headers {
+    [] -> False
+    [#(k, _), ..rest] ->
+      case text.equals_ci(k, lowercase_name) {
+        True -> True
+        False -> has_header_ci(rest, lowercase_name)
+      }
   }
 }
 
