@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Property-based and metamorphic tests using
+  [metamon](https://github.com/nao1215/metamon) covering
+  `multipartkit.encode_form` ↔ `multipartkit.parse` and the
+  `multipartkit/form` builder. Lives in
+  `test/multipartkit_metamon_test.gleam`. Highlights: the
+  encode-then-parse round-trip preserves field count, name, and
+  value for safe (alphanumeric) inputs; `query.field` and
+  `query.fields` agree on the registration order for duplicate
+  names; file parts round-trip name / filename / content-type /
+  body byte-exact; `add_field` body equals `<<value:utf8>>`;
+  `add_file` preserves byte-exact body of arbitrary `BitArray`;
+  CR / LF / NUL injection in `name` / `filename` is silently
+  stripped (pinning the existing #28-fix sanitization until #40 /
+  #41 switch this to a typed error); empty form parses to the
+  empty part list. The round-trip generators use `no_edges` so the
+  CR / LF strip behaviour is exercised explicitly rather than as a
+  silent edge.
+
 ## [0.10.0] - 2026-05-08
 
 ### Fixed
