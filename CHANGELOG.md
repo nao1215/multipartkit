@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-05-08
+
 ### Fixed
 - **`part.new/5`** now synthesises the `Content-Disposition` and / or
   `Content-Type` headers on the way through the constructor when the
