@@ -1,3 +1,4 @@
+import gleam/bool
 import gleam/list
 import gleam/option.{None, Some}
 import multipartkit/infer
@@ -14,6 +15,30 @@ pub opaque type Form {
   Form(reversed_parts: List(Part))
 }
 
+/// Reasons the strict form-builder variants reject input.
+///
+/// The non-strict `add_field` / `add_file` / `add_file_auto` /
+/// `add_file_auto_with` silently strip CR / LF / NUL bytes from
+/// the values that flow into header lines (sealing the #28 header
+/// injection vector). The silent strip is data loss the caller
+/// cannot observe — `add_field("name\n", _)` produces
+/// `name=""`, and `add_file(_, "fi\nle.png", _, _)` concatenates
+/// the two halves into a different valid filename. The `*_strict`
+/// variants surface this as a typed error so callers can render
+/// "field name `foo\\nbar` contains forbidden control bytes"
+/// rather than silently producing the wrong wire. (#40, #41)
+pub type FormError {
+  /// `add_field_strict` saw CR / LF / NUL bytes in the field name.
+  /// Carries the original (un-sanitized) value.
+  NameContainsControlBytes(value: String)
+  /// `add_file_strict` saw CR / LF / NUL bytes in the file's
+  /// filename. Carries the original (un-sanitized) value.
+  FilenameContainsControlBytes(value: String)
+  /// `add_file_strict` saw CR / LF / NUL bytes in the file's
+  /// content type. Carries the original (un-sanitized) value.
+  ContentTypeContainsControlBytes(value: String)
+}
+
 /// A new empty form.
 pub fn new() -> Form {
   Form(reversed_parts: [])
@@ -25,8 +50,13 @@ pub fn new() -> Form {
 /// Carriage returns, line feeds, and NUL bytes in `name` are silently
 /// stripped to prevent header injection. The cached `name` on the resulting
 /// `Part` reflects the sanitized value, matching what a parse-after-encode
-/// round-trip would produce. Use `unsafe_add_part` if byte-exact
-/// preservation is required.
+/// round-trip would produce. The strip is data loss the caller cannot
+/// observe — `add_field("name\n", _)` produces a part with `name=""` —
+/// so callers passing user-typed or upstream data into `name` should
+/// prefer `add_field_strict`, which surfaces the bad input as
+/// `Error(NameContainsControlBytes(value:))` instead. Use
+/// `unsafe_add_part` if byte-exact preservation of arbitrary header
+/// values is required.
 pub fn add_field(form: Form, name: String, value: String) -> Form {
   let safe_name = disposition.sanitize_value(name)
   let header = #(
@@ -49,8 +79,16 @@ pub fn add_field(form: Form, name: String, value: String) -> Form {
 /// Carriage returns, line feeds, and NUL bytes in `name`, `filename`, and
 /// `content_type` are silently stripped to prevent header injection. The
 /// cached `name`, `filename`, and `content_type` on the resulting `Part`
-/// reflect the sanitized values. Use `unsafe_add_part` if byte-exact
-/// preservation is required.
+/// reflect the sanitized values. The strip on `filename` is especially
+/// dangerous — `add_file(_, "fi\nle.png", _, _)` concatenates the two
+/// halves into the *different valid filename* `"file.png"`, which can
+/// change authorisation-relevant identifiers. Callers passing user-typed
+/// or upstream data should prefer `add_file_strict`, which surfaces the
+/// bad input as `Error(NameContainsControlBytes(value:))` /
+/// `Error(FilenameContainsControlBytes(value:))` /
+/// `Error(ContentTypeContainsControlBytes(value:))`. Use
+/// `unsafe_add_part` if byte-exact preservation of arbitrary header
+/// values is required.
 pub fn add_file(
   form: Form,
   name: String,
@@ -103,6 +141,61 @@ pub fn add_file_auto_with(
       }
   }
   add_file(form, name, filename, content_type, body)
+}
+
+/// Strict counterpart of `add_field`: rejects names containing CR /
+/// LF / NUL bytes with `Error(NameContainsControlBytes(value:))`.
+///
+/// The non-strict `add_field` silently strips these bytes (so
+/// `add_field("name\n", _)` produces a part with `name=""`). For
+/// callers that pass user-typed or upstream data into `name` and
+/// want to surface bad inputs as a typed error rather than silent
+/// data loss, use this variant. The `value` payload carries the
+/// caller's original input so the error renders as
+/// "field name `foo\\nbar` contains forbidden control bytes". (#40)
+pub fn add_field_strict(
+  form: Form,
+  name: String,
+  value: String,
+) -> Result(Form, FormError) {
+  use <- bool.guard(
+    when: disposition.has_header_breaking_bytes(name),
+    return: Error(NameContainsControlBytes(value: name)),
+  )
+  Ok(add_field(form, name, value))
+}
+
+/// Strict counterpart of `add_file`: rejects names, filenames, and
+/// content types containing CR / LF / NUL bytes with the matching
+/// `FormError` variant.
+///
+/// The non-strict `add_file` silently strips these bytes. For
+/// `name` the strip leaves an empty string (loud round-trip
+/// failure); for `filename` it concatenates the two halves into a
+/// *different valid filename*, which can change
+/// authorisation-relevant identifiers (the attacker shape
+/// described in #41). The strict variant catches both at the
+/// builder boundary so the wrong wire never gets produced. (#41)
+pub fn add_file_strict(
+  form: Form,
+  name: String,
+  filename: String,
+  content_type: String,
+  body: BitArray,
+) -> Result(Form, FormError) {
+  use <- bool.guard(
+    when: disposition.has_header_breaking_bytes(name),
+    return: Error(NameContainsControlBytes(value: name)),
+  )
+  use <- bool.guard(
+    when: disposition.has_header_breaking_bytes(filename),
+    return: Error(FilenameContainsControlBytes(value: filename)),
+  )
+  use <- bool.guard(
+    when: disposition.has_header_breaking_bytes(content_type),
+    return: Error(ContentTypeContainsControlBytes(value: content_type)),
+  )
+  Ok(add_file(form, name, filename, content_type, body))
 }
 
 /// Append a pre-built `Part` without validation or normalisation.

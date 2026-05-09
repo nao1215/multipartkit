@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`multipartkit/form`**: `add_field_strict` and `add_file_strict`
+  are the typed-error counterparts of the existing
+  `add_field` / `add_file`. The non-strict variants silently strip
+  CR / LF / NUL bytes from the values that flow into header lines
+  (so `add_field("name\n", _)` produces a part with `name=""`,
+  and `add_file(_, "fi\nle.png", _, _)` concatenates the two
+  halves into the *different valid filename* `"file.png"` — the
+  authorisation-relevant identifier change described in #41).
+  The strict variants surface the bad input as
+  `Error(NameContainsControlBytes(value:))` /
+  `Error(FilenameContainsControlBytes(value:))` /
+  `Error(ContentTypeContainsControlBytes(value:))` so callers
+  passing user-typed or upstream data can render an actionable
+  error rather than producing the wrong wire silently. Add the
+  matching `FormError` type (re-exported from the top-level
+  `multipartkit` module). The existing non-strict variants keep
+  their void return for backward compatibility, with doc-comments
+  updated to point at the strict counterparts. (#40, #41)
 - Property-based and metamorphic tests using
   [metamon](https://github.com/nao1215/metamon) covering
   `multipartkit.encode_form` ↔ `multipartkit.parse` and the
