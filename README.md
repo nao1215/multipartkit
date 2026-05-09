@@ -87,6 +87,65 @@ gleam run
 
 Run them all from the repo root with `just examples`.
 
+## Security notes
+
+### Filenames are user-controlled
+
+`part.filename(part)` returns the byte sequence the client sent,
+**unsanitised** — including path-traversal sequences (`../`,
+absolute paths like `/etc/passwd`, Windows UNC like `\\server\share`,
+URL-encoded variants like `..%2f..%2fetc%2fpasswd`). Sanitising the
+filename is the consumer's responsibility; multipartkit deliberately
+does not mutate it because the byte-exact original is sometimes the
+right value to keep (e.g. when the client supplies a content-derived
+identifier).
+
+A naive consumer that joins the filename to a server-side path is
+exposed to path traversal:
+
+```gleam
+let assert Ok(part) = mquery.required_file(parts, "upload")
+let bytes = part.body(part)
+let assert Some(filename) = part.filename(part)
+simplifile.write("./uploads/" <> filename, bytes)
+// ^^^^ attacker-controlled, writes outside ./uploads
+```
+
+Sanitise before joining, or — strongly preferred — derive the
+server-side path from a content hash so the user-supplied name is
+never on the filesystem:
+
+```gleam
+import filepath
+import gleam/string
+
+let safe = filepath.base_name(filename) |> string.replace("..", "")
+simplifile.write(filepath.join("./uploads", safe), bytes)
+```
+
+```gleam
+// Even better: use a content-derived id and recover the extension
+// from a magic-byte detector instead of the user-supplied filename.
+let extension = case mimetype.essence_of(detected) {
+  "image/png" -> "png"
+  "image/jpeg" -> "jpg"
+  _ -> "bin"
+}
+let server_path = filepath.join("./uploads", sha256_of(bytes) <> "." <> extension)
+```
+
+### Header-breaking bytes in form-builder values
+
+`form.add_field` / `form.add_file` / `form.add_file_auto[_with]`
+silently strip CR / LF / NUL bytes from values that flow into header
+lines. The strip seals the CRLF-injection vector but loses the
+caller's input — `add_file(_, "fi\nle.png", _, _)` produces a part
+with filename `"file.png"`, a *different valid filename*. For
+callers passing user-typed or upstream data, prefer
+`form.add_field_strict` / `form.add_file_strict`, which return
+`Result(Form, FormError)` and surface the bad input as a typed
+error instead of coercing it.
+
 ## Streaming semantics
 
 The streaming parser is opt-in. Add it to your project only when you
