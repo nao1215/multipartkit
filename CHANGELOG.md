@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-05-09
+
 ### Documentation
 
 - README gains a `## Security notes` section with two callouts:
