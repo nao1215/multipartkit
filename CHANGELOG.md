@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Documentation
+
+- README gains a `## Security notes` section with two callouts:
+  (a) `part.filename` returns the client-supplied filename
+  unsanitised, and naive `simplifile.write("./uploads/" <> filename,
+  bytes)` is exposed to path traversal — the section shows a
+  basename-style sanitiser and the strongly-preferred content-hash
+  alternative; (b) the form-builder strip behaviour and the
+  strict-variant escape hatch (cross-references the
+  `add_field_strict` / `add_file_strict` entry below). Comparable
+  Node / Go libraries (busboy, gorilla/mux multipart) explicitly
+  warn; this brings multipartkit in line. (#42)
+
 ### Added
 
 - **`multipartkit/form`**: `add_field_strict` and `add_file_strict`
