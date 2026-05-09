@@ -27,6 +27,10 @@ pub type StreamPart =
 pub type Form =
   form.Form
 
+/// Re-export of `multipartkit/form.FormError`.
+pub type FormError =
+  form.FormError
+
 /// Re-export of `multipartkit/limit.Limits`.
 pub type Limits =
   limit.Limits

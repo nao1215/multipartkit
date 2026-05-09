@@ -223,3 +223,97 @@ pub fn add_field_with_quote_in_value_round_trips_test() {
   let assert Ok([p]) = parser.parse(body, content_type)
   part.body(p) |> should.equal(<<"value with \" quote":utf8>>)
 }
+
+// ---------- add_field_strict / add_file_strict (#40 / #41) ----------
+
+pub fn add_field_strict_accepts_safe_name_test() {
+  let assert Ok(f) = form.new() |> form.add_field_strict("name", "value")
+  let assert [p] = form.parts(f)
+  part.name(p) |> should.equal(Some("name"))
+  part.body(p) |> should.equal(<<"value":utf8>>)
+}
+
+pub fn add_field_strict_rejects_lf_in_name_test() {
+  form.new()
+  |> form.add_field_strict("bad\nname", "value")
+  |> should.equal(Error(form.NameContainsControlBytes(value: "bad\nname")))
+}
+
+pub fn add_field_strict_rejects_cr_in_name_test() {
+  form.new()
+  |> form.add_field_strict("bad\rname", "value")
+  |> should.equal(Error(form.NameContainsControlBytes(value: "bad\rname")))
+}
+
+pub fn add_field_strict_rejects_crlf_in_name_test() {
+  form.new()
+  |> form.add_field_strict("bad\r\nname", "value")
+  |> should.equal(Error(form.NameContainsControlBytes(value: "bad\r\nname")))
+}
+
+pub fn add_field_strict_rejects_nul_in_name_test() {
+  form.new()
+  |> form.add_field_strict("bad\u{0}name", "value")
+  |> should.equal(Error(form.NameContainsControlBytes(value: "bad\u{0}name")))
+}
+
+pub fn add_field_strict_value_is_not_validated_test() {
+  // The value goes into the part body, not a header line, so it is
+  // unconstrained — only the `name` is validated for header-breaking
+  // bytes.
+  let assert Ok(f) =
+    form.new() |> form.add_field_strict("ok", "value\nwith\nnewlines")
+  let assert [p] = form.parts(f)
+  part.body(p) |> should.equal(<<"value\nwith\nnewlines":utf8>>)
+}
+
+pub fn add_file_strict_accepts_safe_inputs_test() {
+  let assert Ok(f) =
+    form.new()
+    |> form.add_file_strict("u", "file.png", "image/png", <<137, 80, 78, 71>>)
+  let assert [p] = form.parts(f)
+  part.name(p) |> should.equal(Some("u"))
+  part.filename(p) |> should.equal(Some("file.png"))
+  part.content_type(p) |> should.equal(Some("image/png"))
+  part.body(p) |> should.equal(<<137, 80, 78, 71>>)
+}
+
+pub fn add_file_strict_rejects_lf_in_filename_test() {
+  // The repro from #41: `fi\nle.png` would silently become `file.png`
+  // under `add_file`. The strict variant must surface this as an
+  // explicit error.
+  form.new()
+  |> form.add_file_strict("u", "fi\nle.png", "image/png", <<>>)
+  |> should.equal(Error(form.FilenameContainsControlBytes(value: "fi\nle.png")))
+}
+
+pub fn add_file_strict_rejects_crlf_in_filename_test() {
+  form.new()
+  |> form.add_file_strict("u", "fi\r\nle.png", "image/png", <<>>)
+  |> should.equal(
+    Error(form.FilenameContainsControlBytes(value: "fi\r\nle.png")),
+  )
+}
+
+pub fn add_file_strict_rejects_lf_in_name_test() {
+  form.new()
+  |> form.add_file_strict("u\nname", "file.png", "image/png", <<>>)
+  |> should.equal(Error(form.NameContainsControlBytes(value: "u\nname")))
+}
+
+pub fn add_file_strict_rejects_lf_in_content_type_test() {
+  form.new()
+  |> form.add_file_strict("u", "file.png", "image/png\nX-Evil: 1", <<>>)
+  |> should.equal(
+    Error(form.ContentTypeContainsControlBytes(value: "image/png\nX-Evil: 1")),
+  )
+}
+
+pub fn add_file_strict_first_failure_wins_test() {
+  // When all three inputs are bad, the error variant matches the
+  // first checked field (name). Pinning the order so callers can rely
+  // on it for rendering.
+  form.new()
+  |> form.add_file_strict("u\n", "f\n", "t\n", <<>>)
+  |> should.equal(Error(form.NameContainsControlBytes(value: "u\n")))
+}
