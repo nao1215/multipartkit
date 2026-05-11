@@ -317,3 +317,66 @@ pub fn add_file_strict_first_failure_wins_test() {
   |> form.add_file_strict("u\n", "f\n", "t\n", <<>>)
   |> should.equal(Error(form.NameContainsControlBytes(value: "u\n")))
 }
+
+// ---------- labelled-argument call sites (#47) ----------
+//
+// The builder functions accept labelled arguments alongside the
+// positional form. These tests pin the labelled call shape so the
+// labels stay part of the public API (a label rename is a breaking
+// change).
+
+pub fn add_field_accepts_labelled_arguments_test() {
+  let f =
+    form.new()
+    |> form.add_field(name: "a", value: "1")
+    |> form.add_field(name: "b", value: "2")
+  let parts = form.parts(f)
+  case parts {
+    [first, second] -> {
+      part.name(first) |> should.equal(Some("a"))
+      part.body(first) |> should.equal(<<"1":utf8>>)
+      part.name(second) |> should.equal(Some("b"))
+      part.body(second) |> should.equal(<<"2":utf8>>)
+    }
+    _ -> should.fail()
+  }
+}
+
+pub fn add_file_accepts_labelled_arguments_test() {
+  let f =
+    form.new()
+    |> form.add_file(
+      name: "upload",
+      filename: "doc.pdf",
+      content_type: "application/pdf",
+      body: <<"%PDF":utf8>>,
+    )
+  let assert [the_part] = form.parts(f)
+  part.name(the_part) |> should.equal(Some("upload"))
+  part.filename(the_part) |> should.equal(Some("doc.pdf"))
+  part.content_type(the_part) |> should.equal(Some("application/pdf"))
+  part.body(the_part) |> should.equal(<<"%PDF":utf8>>)
+}
+
+pub fn add_field_strict_accepts_labelled_arguments_test() {
+  let assert Ok(f) = form.new() |> form.add_field_strict(name: "k", value: "v")
+  let assert [p] = form.parts(f)
+  part.name(p) |> should.equal(Some("k"))
+  part.body(p) |> should.equal(<<"v":utf8>>)
+}
+
+pub fn add_file_strict_accepts_labelled_arguments_test() {
+  let assert Ok(f) =
+    form.new()
+    |> form.add_file_strict(
+      name: "u",
+      filename: "file.png",
+      content_type: "image/png",
+      body: <<137, 80, 78, 71>>,
+    )
+  let assert [p] = form.parts(f)
+  part.name(p) |> should.equal(Some("u"))
+  part.filename(p) |> should.equal(Some("file.png"))
+  part.content_type(p) |> should.equal(Some("image/png"))
+  part.body(p) |> should.equal(<<137, 80, 78, 71>>)
+}

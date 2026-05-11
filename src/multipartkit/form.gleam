@@ -57,7 +57,7 @@ pub fn new() -> Form {
 /// `Error(NameContainsControlBytes(value:))` instead. Use
 /// `unsafe_add_part` if byte-exact preservation of arbitrary header
 /// values is required.
-pub fn add_field(form: Form, name: String, value: String) -> Form {
+pub fn add_field(form: Form, name name: String, value value: String) -> Form {
   let safe_name = disposition.sanitize_value(name)
   let header = #(
     "Content-Disposition",
@@ -91,10 +91,10 @@ pub fn add_field(form: Form, name: String, value: String) -> Form {
 /// values is required.
 pub fn add_file(
   form: Form,
-  name: String,
-  filename: String,
-  content_type: String,
-  body: BitArray,
+  name name: String,
+  filename filename: String,
+  content_type content_type: String,
+  body body: BitArray,
 ) -> Form {
   push(form, build_file_part(name, filename, content_type, body))
 }
@@ -140,7 +140,7 @@ pub fn add_file_auto_with(
         None -> "application/octet-stream"
       }
   }
-  add_file(form, name, filename, content_type, body)
+  add_file(form, name:, filename:, content_type:, body:)
 }
 
 /// Strict counterpart of `add_field`: rejects names containing CR /
@@ -155,14 +155,14 @@ pub fn add_file_auto_with(
 /// "field name `foo\\nbar` contains forbidden control bytes". (#40)
 pub fn add_field_strict(
   form: Form,
-  name: String,
-  value: String,
+  name name: String,
+  value value: String,
 ) -> Result(Form, FormError) {
   use <- bool.guard(
     when: disposition.has_header_breaking_bytes(name),
     return: Error(NameContainsControlBytes(value: name)),
   )
-  Ok(add_field(form, name, value))
+  Ok(add_field(form, name:, value:))
 }
 
 /// Strict counterpart of `add_file`: rejects names, filenames, and
@@ -178,10 +178,10 @@ pub fn add_field_strict(
 /// builder boundary so the wrong wire never gets produced. (#41)
 pub fn add_file_strict(
   form: Form,
-  name: String,
-  filename: String,
-  content_type: String,
-  body: BitArray,
+  name name: String,
+  filename filename: String,
+  content_type content_type: String,
+  body body: BitArray,
 ) -> Result(Form, FormError) {
   use <- bool.guard(
     when: disposition.has_header_breaking_bytes(name),
@@ -195,7 +195,7 @@ pub fn add_file_strict(
     when: disposition.has_header_breaking_bytes(content_type),
     return: Error(ContentTypeContainsControlBytes(value: content_type)),
   )
-  Ok(add_file(form, name, filename, content_type, body))
+  Ok(add_file(form, name:, filename:, content_type:, body:))
 }
 
 /// Append a pre-built `Part` without validation or normalisation.

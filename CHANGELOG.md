@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- `multipartkit/form.add_field`, `add_file`, `add_field_strict`, and
+  `add_file_strict` now have labelled arguments (`name:`, `value:`,
+  `filename:`, `content_type:`, `body:`) so builder chains read like
+  the rest of the Gleam ecosystem. Source-compatible: existing
+  positional callers continue to work unchanged. (#47)
+
 ## [0.11.0] - 2026-05-09
 
 ### Documentation
