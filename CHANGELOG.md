@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-05-11
+
 ### Changed
 
 - `multipartkit/form.add_field`, `add_file`, `add_field_strict`, and
