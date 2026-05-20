@@ -1,6 +1,7 @@
 import gleam/bool
 import gleam/list
 import gleam/option.{None, Some}
+import gleam/string
 import multipartkit/infer
 import multipartkit/internal/disposition
 import multipartkit/part.{type Part}
@@ -37,6 +38,15 @@ pub type FormError {
   /// `add_file_strict` saw CR / LF / NUL bytes in the file's
   /// content type. Carries the original (un-sanitized) value.
   ContentTypeContainsControlBytes(value: String)
+  /// `add_field_strict` / `add_file_strict` saw an empty (or
+  /// whitespace-only) field name. RFC 7578 §4.2 requires the
+  /// `Content-Disposition` `name` parameter to be the field name,
+  /// and an empty name produces a wire image whose interpretation
+  /// is implementation-defined at the receiver (some servers skip
+  /// the field, some overwrite siblings keyed on `""`, some reject
+  /// the whole body). Carries the original (un-trimmed) value so
+  /// callers can render diagnostics. (#51)
+  EmptyFieldName(value: String)
 }
 
 /// A new empty form.
@@ -47,16 +57,20 @@ pub fn new() -> Form {
 /// Append a text field. `value` is encoded as UTF-8 in the part body. No
 /// filename is set.
 ///
-/// Carriage returns, line feeds, and NUL bytes in `name` are silently
-/// stripped to prevent header injection. The cached `name` on the resulting
-/// `Part` reflects the sanitized value, matching what a parse-after-encode
-/// round-trip would produce. The strip is data loss the caller cannot
-/// observe — `add_field("name\n", _)` produces a part with `name=""` —
-/// so callers passing user-typed or upstream data into `name` should
-/// prefer `add_field_strict`, which surfaces the bad input as
-/// `Error(NameContainsControlBytes(value:))` instead. Use
-/// `unsafe_add_part` if byte-exact preservation of arbitrary header
-/// values is required.
+/// RFC 7578 §4.2 requires the `Content-Disposition` `name` parameter
+/// to be non-empty (it is the field name itself). This non-strict
+/// variant does **not** enforce that — it silently accepts `""` and
+/// also silently strips CR / LF / NUL bytes from `name` to prevent
+/// header injection. The cached `name` on the resulting `Part`
+/// reflects the sanitized value, matching what a parse-after-encode
+/// round-trip would produce. The silent acceptance and strip is data
+/// loss the caller cannot observe — `add_field("", _)` produces
+/// `name=""`, and `add_field("name\n", _)` produces a part with
+/// `name=""` — so callers passing user-typed or upstream data into
+/// `name` should prefer `add_field_strict`, which surfaces both
+/// failure modes as typed errors (`EmptyFieldName(value:)` and
+/// `NameContainsControlBytes(value:)`). Use `unsafe_add_part` if
+/// byte-exact preservation of arbitrary header values is required.
 pub fn add_field(form: Form, name name: String, value value: String) -> Form {
   let safe_name = disposition.sanitize_value(name)
   let header = #(
@@ -76,15 +90,21 @@ pub fn add_field(form: Form, name name: String, value value: String) -> Form {
 
 /// Append a file part with an explicit content type.
 ///
-/// Carriage returns, line feeds, and NUL bytes in `name`, `filename`, and
-/// `content_type` are silently stripped to prevent header injection. The
-/// cached `name`, `filename`, and `content_type` on the resulting `Part`
-/// reflect the sanitized values. The strip on `filename` is especially
-/// dangerous — `add_file(_, "fi\nle.png", _, _)` concatenates the two
-/// halves into the *different valid filename* `"file.png"`, which can
-/// change authorisation-relevant identifiers. Callers passing user-typed
-/// or upstream data should prefer `add_file_strict`, which surfaces the
-/// bad input as `Error(NameContainsControlBytes(value:))` /
+/// RFC 7578 §4.2 requires the `Content-Disposition` `name` parameter
+/// to be non-empty (the `filename` parameter may legitimately be
+/// empty). This non-strict variant does **not** enforce the
+/// non-empty `name` rule — it silently accepts `""` and also
+/// silently strips CR / LF / NUL bytes from `name`, `filename`, and
+/// `content_type` to prevent header injection. The cached `name`,
+/// `filename`, and `content_type` on the resulting `Part` reflect
+/// the sanitized values. The strip on `filename` is especially
+/// dangerous — `add_file(_, "fi\nle.png", _, _)` concatenates the
+/// two halves into the *different valid filename* `"file.png"`,
+/// which can change authorisation-relevant identifiers. Callers
+/// passing user-typed or upstream data should prefer
+/// `add_file_strict`, which surfaces the bad input as
+/// `Error(EmptyFieldName(value:))` /
+/// `Error(NameContainsControlBytes(value:))` /
 /// `Error(FilenameContainsControlBytes(value:))` /
 /// `Error(ContentTypeContainsControlBytes(value:))`. Use
 /// `unsafe_add_part` if byte-exact preservation of arbitrary header
@@ -144,20 +164,31 @@ pub fn add_file_auto_with(
 }
 
 /// Strict counterpart of `add_field`: rejects names containing CR /
-/// LF / NUL bytes with `Error(NameContainsControlBytes(value:))`.
+/// LF / NUL bytes with `Error(NameContainsControlBytes(value:))`,
+/// and rejects empty or whitespace-only names with
+/// `Error(EmptyFieldName(value:))`.
 ///
-/// The non-strict `add_field` silently strips these bytes (so
-/// `add_field("name\n", _)` produces a part with `name=""`). For
+/// The non-strict `add_field` silently strips control bytes (so
+/// `add_field("name\n", _)` produces a part with `name=""`), and
+/// also silently accepts a truly empty `name`. RFC 7578 §4.2
+/// requires the `Content-Disposition` `name` parameter to be the
+/// field name; an empty name produces a wire image whose
+/// interpretation is implementation-defined at the receiver. For
 /// callers that pass user-typed or upstream data into `name` and
 /// want to surface bad inputs as a typed error rather than silent
 /// data loss, use this variant. The `value` payload carries the
 /// caller's original input so the error renders as
-/// "field name `foo\\nbar` contains forbidden control bytes". (#40)
+/// "field name `foo\\nbar` contains forbidden control bytes" or
+/// "field name `   ` is empty". (#40, #51)
 pub fn add_field_strict(
   form: Form,
   name name: String,
   value value: String,
 ) -> Result(Form, FormError) {
+  use <- bool.guard(
+    when: string.trim(name) == "",
+    return: Error(EmptyFieldName(value: name)),
+  )
   use <- bool.guard(
     when: disposition.has_header_breaking_bytes(name),
     return: Error(NameContainsControlBytes(value: name)),
@@ -167,15 +198,19 @@ pub fn add_field_strict(
 
 /// Strict counterpart of `add_file`: rejects names, filenames, and
 /// content types containing CR / LF / NUL bytes with the matching
-/// `FormError` variant.
+/// `FormError` variant, and rejects an empty or whitespace-only
+/// `name` with `Error(EmptyFieldName(value:))`. (`filename` may
+/// legitimately be empty — only `name` is required to be
+/// non-empty per RFC 7578 §4.2.)
 ///
-/// The non-strict `add_file` silently strips these bytes. For
+/// The non-strict `add_file` silently strips control bytes. For
 /// `name` the strip leaves an empty string (loud round-trip
 /// failure); for `filename` it concatenates the two halves into a
 /// *different valid filename*, which can change
 /// authorisation-relevant identifiers (the attacker shape
 /// described in #41). The strict variant catches both at the
-/// builder boundary so the wrong wire never gets produced. (#41)
+/// builder boundary so the wrong wire never gets produced.
+/// (#41, #51)
 pub fn add_file_strict(
   form: Form,
   name name: String,
@@ -183,6 +218,10 @@ pub fn add_file_strict(
   content_type content_type: String,
   body body: BitArray,
 ) -> Result(Form, FormError) {
+  use <- bool.guard(
+    when: string.trim(name) == "",
+    return: Error(EmptyFieldName(value: name)),
+  )
   use <- bool.guard(
     when: disposition.has_header_breaking_bytes(name),
     return: Error(NameContainsControlBytes(value: name)),
