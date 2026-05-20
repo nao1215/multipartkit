@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-05-20
+
 ### Documentation
 
 - `multipartkit/infer.content_type_from_filename` and `content_type_from_bytes` docstrings, and the README "Pluggable content-type inference" bullet, now state explicitly that these top-level helpers are **default no-ops** of the pluggable inference interface and always return `None`; callers wanting real inference must wire an `Inferer` (e.g. backed by `nao1215/mimetype`) into `form.add_file_auto_with`. (#52)
