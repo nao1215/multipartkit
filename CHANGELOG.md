@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- `multipartkit/content_disposition.parse` now enforces RFC 7230 §3.2.6 `quoted-pair` strictly: a `\X` whose `X` is outside `HTAB / SP / VCHAR / obs-text` (for example `NUL`, `CR`, `LF`, or any other ASCII control byte) is rejected with the new `Error(InvalidQuotedPair(_))` instead of silently dropping the backslash, blocking `NUL`-smuggling into the decoded `name` / `filename`. (#50)
+
 ## [0.12.0] - 2026-05-11
 
 ### Changed
