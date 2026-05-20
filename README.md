@@ -16,7 +16,12 @@ target: `multipart/form-data`. Secondary: `multipart/mixed` and
   `filename*` (UTF-8 and ISO-8859-1).
 - Pluggable content-type inference — wire
   [`nao1215/mimetype`](https://github.com/nao1215/mimetype) (or any
-  other inferer) without changing this library.
+  other inferer) without changing this library. The top-level
+  `multipartkit/infer.content_type_from_filename` and
+  `content_type_from_bytes` are documented **default no-ops** that
+  always return `None`; actual inference happens when an `Inferer` is
+  passed to `form.add_file_auto_with` (see
+  [`examples/mimetype_inference`](examples/mimetype_inference)).
 - Conservative default limits, runtime-tunable.
 
 ## Install
