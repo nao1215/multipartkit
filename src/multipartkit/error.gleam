@@ -51,4 +51,15 @@ pub type MultipartError {
   /// inject a header break or split into a different `name: value` pair
   /// at parse time. Carries the offending name.
   InvalidHeaderName(name: String)
+  /// A `Content-Disposition` quoted-string parameter contained a
+  /// `\X` escape whose `X` is outside the RFC 7230 §3.2.6
+  /// `quoted-pair` grammar (`HTAB / SP / VCHAR / obs-text`). The
+  /// offending second character is not `HTAB`, `SP`, a `VCHAR`
+  /// (`%x21-7E`), nor `obs-text` (`%x80-FF`) — for example
+  /// `NUL`, `CR`, `LF`, or any other ASCII control byte. Allowing
+  /// these would let an attacker smuggle `NUL` into the decoded
+  /// `name` / `filename` (e.g. for C-string truncation attacks).
+  /// The carried value is the original Content-Disposition header
+  /// text so callers can render diagnostics.
+  InvalidQuotedPair(String)
 }

@@ -3,8 +3,10 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
-import multipartkit/error.{type MultipartError, InvalidContentDisposition}
-import multipartkit/internal/text
+import multipartkit/error.{
+  type MultipartError, InvalidContentDisposition, InvalidQuotedPair,
+}
+import multipartkit/internal/text.{QuotedPairInvalid, QuotedSyntax}
 
 /// A parsed `Content-Disposition` header value.
 ///
@@ -19,7 +21,13 @@ import multipartkit/internal/text
 ///   RFC 5987 / RFC 8187 `*`-form when present (with the `*`-form taking
 ///   precedence over the plain form), otherwise from the plain parameter
 ///   value with surrounding quotes removed and backslash-escapes resolved
-///   per RFC 7230 quoted-string rules.
+///   per RFC 7230 §3.2.6 quoted-string / quoted-pair rules. A `\X`
+///   escape whose `X` is outside the `quoted-pair` grammar
+///   (`HTAB / SP / VCHAR / obs-text`) — for instance `NUL`, `CR`, `LF`,
+///   or any other ASCII control byte — causes `parse` to return
+///   `Error(InvalidQuotedPair(original_value))` instead of silently
+///   dropping the backslash. This blocks `NUL`-smuggling into the
+///   decoded `name` / `filename`.
 /// - `params/1` contains every parameter as it appeared in the input
 ///   including `filename` and `name`, in order. Duplicate parameter names
 ///   are preserved left-to-right; only the first occurrence wins for the
@@ -116,8 +124,9 @@ fn parse_one_param(
     _ ->
       case string.pop_grapheme(after_key) {
         Ok(#("=", value_rest)) ->
-          case text.read_token_or_quoted(value_rest) {
-            Error(Nil) -> Error(InvalidContentDisposition(original))
+          case text.read_token_or_quoted_strict(value_rest) {
+            Error(QuotedPairInvalid) -> Error(InvalidQuotedPair(original))
+            Error(QuotedSyntax) -> Error(InvalidContentDisposition(original))
             Ok(#(raw_value, tail)) ->
               parse_params(tail, [#(key, raw_value), ..acc], original)
           }
