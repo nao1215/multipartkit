@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `multipartkit/form.add_field_strict` and `add_file_strict` now reject empty or whitespace-only `name` with the new `Error(EmptyFieldName(value:))` variant, aligning with RFC 7578 §4.2 which requires the `Content-Disposition` `name` parameter to be the field name; the non-strict `add_field` / `add_file` keep their existing silent-accept behaviour for backward compatibility. (#51)
+
 ### Changed
 
 - `multipartkit/content_disposition.parse` now enforces RFC 7230 §3.2.6 `quoted-pair` strictly: a `\X` whose `X` is outside `HTAB / SP / VCHAR / obs-text` (for example `NUL`, `CR`, `LF`, or any other ASCII control byte) is rejected with the new `Error(InvalidQuotedPair(_))` instead of silently dropping the backslash, blocking `NUL`-smuggling into the decoded `name` / `filename`. (#50)
