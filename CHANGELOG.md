@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Documentation
+
+- `multipartkit/infer.content_type_from_filename` and `content_type_from_bytes` docstrings, and the README "Pluggable content-type inference" bullet, now state explicitly that these top-level helpers are **default no-ops** of the pluggable inference interface and always return `None`; callers wanting real inference must wire an `Inferer` (e.g. backed by `nao1215/mimetype`) into `form.add_file_auto_with`. (#52)
+
 ### Added
 
 - `multipartkit/form.add_field_strict` and `add_file_strict` now reject empty or whitespace-only `name` with the new `Error(EmptyFieldName(value:))` variant, aligning with RFC 7578 §4.2 which requires the `Content-Disposition` `name` parameter to be the field name; the non-strict `add_field` / `add_file` keep their existing silent-accept behaviour for backward compatibility. (#51)
