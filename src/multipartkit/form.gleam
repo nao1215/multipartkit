@@ -1,4 +1,5 @@
 import gleam/bool
+import gleam/int
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
@@ -22,8 +23,9 @@ pub opaque type Form {
 /// `add_file_auto_with` silently strip CR / LF / NUL bytes from
 /// the values that flow into header lines (sealing the #28 header
 /// injection vector). The silent strip is data loss the caller
-/// cannot observe — `add_field("name\n", _)` produces
-/// `name=""`, and `add_file(_, "fi\nle.png", _, _)` concatenates
+/// cannot observe — `add_field("name\n", _)` produces a part renamed
+/// to `"_unnamed_<n>"` (the lenient path never emits `name=""`; see
+/// `add_field`), and `add_file(_, "fi\nle.png", _, _)` concatenates
 /// the two halves into a different valid filename. The `*_strict`
 /// variants surface this as a typed error so callers can render
 /// "field name `foo\\nbar` contains forbidden control bytes"
@@ -59,20 +61,28 @@ pub fn new() -> Form {
 ///
 /// RFC 7578 §4.2 requires the `Content-Disposition` `name` parameter
 /// to be non-empty (it is the field name itself). This non-strict
-/// variant does **not** enforce that — it silently accepts `""` and
-/// also silently strips CR / LF / NUL bytes from `name` to prevent
-/// header injection. The cached `name` on the resulting `Part`
-/// reflects the sanitized value, matching what a parse-after-encode
-/// round-trip would produce. The silent acceptance and strip is data
-/// loss the caller cannot observe — `add_field("", _)` produces
-/// `name=""`, and `add_field("name\n", _)` produces a part with
-/// `name=""` — so callers passing user-typed or upstream data into
-/// `name` should prefer `add_field_strict`, which surfaces both
-/// failure modes as typed errors (`EmptyFieldName(value:)` and
-/// `NameContainsControlBytes(value:)`). Use `unsafe_add_part` if
+/// variant does **not** reject a bad `name` — it silently strips CR /
+/// LF / NUL bytes to prevent header injection. To guarantee the
+/// resulting part is always RFC 7578-addressable, a `name` that is
+/// empty (or becomes empty / whitespace-only after the strip) is
+/// replaced with a generated placeholder `"_unnamed_<n>"`, where `<n>`
+/// is the part's zero-based position in the form. This means the
+/// observable `name` is **never** `""` — `add_field("", _)` and
+/// `add_field("name\n", _)` both produce a part named `"_unnamed_0"`
+/// rather than a silently empty-named part whose receiver
+/// interpretation is implementation-defined (#57, #58). The rename is
+/// still a loss the caller cannot prevent here, so callers passing
+/// user-typed or upstream data into `name` should prefer
+/// `add_field_strict`, which surfaces both failure modes as typed
+/// errors (`EmptyFieldName(value:)` and `NameContainsControlBytes(value:)`)
+/// instead of renaming. The cached `name` on the resulting `Part`
+/// reflects the placeholder and survives a parse-after-encode round-trip
+/// unchanged. The placeholder is position-based, not collision-proof: a
+/// caller who also passes a literal `"_unnamed_<k>"` as a real field name
+/// can end up with two parts sharing that name. Use `unsafe_add_part` if
 /// byte-exact preservation of arbitrary header values is required.
 pub fn add_field(form: Form, name name: String, value value: String) -> Form {
-  let safe_name = disposition.sanitize_value(name)
+  let safe_name = ensure_named(form, disposition.sanitize_value(name))
   let header = #(
     "Content-Disposition",
     disposition.build_form_data_value(safe_name, None),
@@ -253,6 +263,20 @@ pub fn parts(form: Form) -> List(Part) {
 
 fn push(form: Form, the_part: Part) -> Form {
   Form(reversed_parts: [the_part, ..form.reversed_parts])
+}
+
+/// Guarantee a non-empty field name for the lenient (`add_field`)
+/// builder path. `safe_name` is the value after CR / LF / NUL stripping.
+/// RFC 7578 §4.2 requires the `name` parameter to be the field name; an
+/// empty name produces a wire image whose receiver interpretation is
+/// implementation-defined. Rather than emit `name=""`, replace an empty
+/// (or whitespace-only) name with `"_unnamed_<n>"`, where `<n>` is the
+/// zero-based position the new part will occupy. A name that is merely
+/// padded (e.g. `" a "`) is kept as-is — only an entirely blank name is
+/// rewritten. (#57, #58)
+fn ensure_named(form: Form, safe_name: String) -> String {
+  use <- bool.guard(when: string.trim(safe_name) != "", return: safe_name)
+  "_unnamed_" <> int.to_string(list.length(form.reversed_parts))
 }
 
 fn build_file_part(

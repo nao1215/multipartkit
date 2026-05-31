@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.13.0] - 2026-05-20
+### Fixed
+
+- `multipartkit/form.add_field` no longer lets an empty (or stripped-to-empty / whitespace-only) `name` reach the wire as `Content-Disposition: form-data; name=""`. The lenient builder now renames such a part to a generated `"_unnamed_<n>"` placeholder (where `<n>` is the part's zero-based position), so the observable `name` is never `Some("")` and the part stays RFC 7578-addressable. The placeholder is position-based, not collision-proof against a caller who also supplies a literal `"_unnamed_<k>"`. Callers that want bad names surfaced as a typed error rather than renamed should use `add_field_strict`. (#57, #58)
 
 ### Documentation
 
