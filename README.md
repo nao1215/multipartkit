@@ -14,13 +14,17 @@ target: `multipart/form-data`. Secondary: `multipart/mixed` and
   parser with safe per-chunk `max_body_bytes` enforcement.
 - `Content-Disposition` parser including RFC 5987 / RFC 8187
   `filename*` (UTF-8 and ISO-8859-1).
-- Pluggable content-type inference — wire
-  [`nao1215/mimetype`](https://github.com/nao1215/mimetype) (or any
-  other inferer) without changing this library. The top-level
-  `multipartkit/infer.content_type_from_filename` and
-  `content_type_from_bytes` are documented **default no-ops** that
-  always return `None`; actual inference happens when an `Inferer` is
-  passed to `form.add_file_auto_with` (see
+- Built-in content-type inference — `multipartkit/infer.content_type_from_filename`
+  and `content_type_from_bytes` resolve well-known extensions and
+  magic-byte signatures (`"a.png"` -> `Some("image/png")`, a PNG header
+  -> `Some("image/png")`) by delegating to
+  [`nao1215/mimetype`](https://github.com/nao1215/mimetype), returning
+  `None` for unknown input. Inference into the form builder stays
+  opt-in: `add_file_auto` uses the no-op `default_inferer` (so it never
+  changes a content type implicitly), while
+  `add_file_auto_with(form, ..., infer.builtin_inferer())` opts into the
+  built-in inference, and a custom `Inferer` lets you wire any other
+  library (see
   [`examples/mimetype_inference`](examples/mimetype_inference)).
 - Conservative default limits, runtime-tunable.
 
