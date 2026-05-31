@@ -133,8 +133,10 @@ pub fn add_file(
 ///
 /// Equivalent to `add_file_auto_with(form, name, filename, body,
 /// infer.default_inferer())`. The default inferer returns `None` from both
-/// helpers in v0.1.0, so this falls through to `application/octet-stream`
-/// unless you call `add_file_auto_with` with a real inferer.
+/// helpers, so this always falls through to `application/octet-stream` —
+/// inference is opt-in. To resolve well-known extensions and magic-byte
+/// signatures via `nao1215/mimetype`, call `add_file_auto_with` with
+/// `infer.builtin_inferer()` (or your own `Inferer`).
 pub fn add_file_auto(
   form: Form,
   name: String,
