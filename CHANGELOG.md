@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-05-31
+
 ### Changed
 
 - `multipartkit/infer.content_type_from_filename` and `content_type_from_bytes` are no longer no-ops: they now resolve well-known extensions and magic-byte signatures by delegating to `nao1215/mimetype`, returning `Some(mime)` for recognised input (`"a.png"` -> `Some("image/png")`, a PNG header -> `Some("image/png")`) and `None` otherwise. `nao1215/mimetype` is added as a runtime dependency. A new `infer.builtin_inferer()` wires these helpers into an `Inferer` so `form.add_file_auto_with(form, ..., infer.builtin_inferer())` gets built-in inference; `infer.default_inferer()` is intentionally kept a no-op so `add_file_auto` still falls through to `application/octet-stream` and never changes a content type implicitly. This reverses the v0.13.0 (#52) decision to ship these helpers as documented no-ops. (#59)
