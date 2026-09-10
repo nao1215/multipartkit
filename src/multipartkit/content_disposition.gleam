@@ -155,7 +155,10 @@ fn pick_convenience(
   }
 }
 
-fn find_param_ci(params: List(#(String, String)), key: String) -> Option(String) {
+fn find_param_ci(
+  params: List(#(String, String)),
+  key: String,
+) -> Option(String) {
   case params {
     [] -> None
     [#(k, v), ..rest] ->
@@ -182,7 +185,10 @@ fn decode_rfc5987(input: String) -> Result(String, Nil) {
   }
 }
 
-fn decode_with_charset(charset: String, bytes: BitArray) -> Result(String, Nil) {
+fn decode_with_charset(
+  charset: String,
+  bytes: BitArray,
+) -> Result(String, Nil) {
   let lower = text.ascii_lowercase(charset)
   case lower {
     "utf-8" -> bit_array.to_string(bytes)
