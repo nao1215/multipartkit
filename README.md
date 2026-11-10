@@ -209,6 +209,23 @@ just ci
 is not required in the current shell. See
 [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full workflow.
 
+## Verifying releases
+
+Each GitHub Release attaches the Hex package tarball (`multipartkit-<version>.tar`),
+`checksums.txt`, a cosign signature bundle (`checksums.txt.sigstore.json`) and
+build provenance (`multipartkit-<version>.intoto.jsonl`). Download the assets, then:
+
+```sh
+gh attestation verify multipartkit-<version>.tar --repo nao1215/multipartkit
+
+cosign verify-blob \
+  --bundle checksums.txt.sigstore.json \
+  --certificate-identity-regexp '^https://github.com/nao1215/multipartkit/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  checksums.txt
+sha256sum --check checksums.txt
+```
+
 ## License
 
 Released under the [MIT License](LICENSE) — see the file for details.
