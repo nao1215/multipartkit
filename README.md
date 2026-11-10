@@ -220,7 +220,7 @@ gh attestation verify multipartkit-<version>.tar --repo nao1215/multipartkit
 
 cosign verify-blob \
   --bundle checksums.txt.sigstore.json \
-  --certificate-identity-regexp '^https://github.com/nao1215/multipartkit/' \
+  --certificate-identity-regexp '^https://github\.com/nao1215/multipartkit/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   checksums.txt
 sha256sum --check checksums.txt
