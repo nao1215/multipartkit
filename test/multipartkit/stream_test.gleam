@@ -307,3 +307,39 @@ pub fn parse_stream_max_part_bytes_caught_incrementally_test() {
     _ -> should.fail()
   }
 }
+
+pub fn parse_stream_counts_epilogue_against_max_body_bytes_test() {
+  // The bytes after the closing delimiter (the RFC 2046 epilogue, here the
+  // final CRLF) are part of the input, as in `parse_with_limits`. Whether
+  // the last chunk is pulled must not depend on how the input is cut.
+  let body = one_part_body()
+  let total = bit_array.byte_size(body)
+  let assert Ok(tight) =
+    limit.new(
+      max_body_bytes: total - 1,
+      max_part_bytes: 1000,
+      max_parts: 100,
+      max_header_bytes: 1000,
+    )
+  let assert Ok(exact) =
+    limit.new(
+      max_body_bytes: total,
+      max_part_bytes: 1000,
+      max_parts: 100,
+      max_header_bytes: 1000,
+    )
+  list.each([1, 2, 7, total - 1, total], fn(size) {
+    let assert Ok(over) =
+      stream.parse_stream_with_limits(split_into_chunks(body, size), ct, tight)
+    case list.last(drain_parts(over)) {
+      Ok(Error(error.BodyTooLarge(n))) -> n |> should.equal(total - 1)
+      _ -> should.fail()
+    }
+    let assert Ok(fits) =
+      stream.parse_stream_with_limits(split_into_chunks(body, size), ct, exact)
+    drain_parts(fits)
+    |> list.all(fn(item) { item != Error(error.BodyTooLarge(total)) })
+    |> should.be_true
+    drain_parts(fits) |> list.length |> should.equal(1)
+  })
+}
