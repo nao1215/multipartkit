@@ -213,6 +213,17 @@ just ci
 is not required in the current shell. See
 [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full workflow.
 
+## Testing
+
+| Technique | Bug class caught here |
+|---|---|
+| Examples and unit tests | [Wrong parts, headers and errors; golden wire bytes](doc/testing.md#examples-and-unit-tests) |
+| Generated properties | [Encode / parse round trips that lose fields or bytes](doc/testing.md#generated-properties) |
+| Differential testing | [Buffered and streaming parsers disagreeing on chunking, damage or limits](doc/testing.md#differential-testing) |
+| Boundary tables | [Off-by-one character classes in `filename*` and quoted-pair](doc/testing.md#boundary-tables) |
+| Nightly runs | [Rare inputs the normal run count misses](doc/testing.md#nightly-runs) |
+| Mutation testing | [Assertions that miss a changed operator or branch](doc/testing.md#mutation-testing) |
+
 ## Verifying releases
 
 Each GitHub Release attaches the Hex package tarball (`multipartkit-<version>.tar`),
