@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `parse_stream_with_limits` counts the bytes after the closing delimiter (the epilogue) against `max_body_bytes`, as `parse_with_limits` does. Before, a message one byte over the limit was rejected when the epilogue arrived in the same chunk as the closing delimiter and accepted when it arrived in a later chunk.
+
 ### Changed
 
 - GitHub Releases now attach the Hex package tarball, `checksums.txt`, a keyless cosign signature bundle for it and build provenance (`*.intoto.jsonl`). See "Verifying releases" in the README.

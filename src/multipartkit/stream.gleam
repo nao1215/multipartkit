@@ -341,22 +341,44 @@ fn finalise_part(
               content_type: meta.content_type,
               body: chunk_body(part_body, body_chunk_size),
             )
-          let next_done = case kind {
-            scan.Closing -> True
-            scan.Delimiter -> False
+          let next =
+            StreamState(..state, cursor: after_delim, parts_count: new_count)
+          case kind {
+            scan.Delimiter -> PartReady(stream_part, compact_buffer(next))
+            scan.Closing ->
+              // The epilogue after the closing delimiter is ignored, but it
+              // is still input: count it against `max_body_bytes` as
+              // `parse_with_limits` does, so the outcome does not depend on
+              // whether it arrived in the same chunk as the delimiter.
+              case drain_epilogue(next.chunks, next.bytes_pulled, next.limits) {
+                Error(err) -> Failed(err)
+                Ok(Nil) ->
+                  PartReady(
+                    stream_part,
+                    StreamState(..next, buf: <<>>, cursor: 0, done: True),
+                  )
+              }
           }
-          PartReady(
-            stream_part,
-            compact_buffer(
-              StreamState(
-                ..state,
-                cursor: after_delim,
-                parts_count: new_count,
-                done: next_done,
-              ),
-            ),
-          )
         }
+      }
+    }
+  }
+}
+
+/// Internal: pull the chunks left after the closing delimiter without
+/// keeping them, failing once the total input exceeds `max_body_bytes`.
+fn drain_epilogue(
+  chunks: Yielder(BitArray),
+  pulled: Int,
+  limits: Limits,
+) -> Result(Nil, MultipartError) {
+  case yielder.step(chunks) {
+    yielder.Done -> Ok(Nil)
+    yielder.Next(chunk, rest) -> {
+      let pulled = pulled + bit_array.byte_size(chunk)
+      case pulled > limit.max_body_bytes(limits) {
+        True -> Error(BodyTooLarge(limit.max_body_bytes(limits)))
+        False -> drain_epilogue(rest, pulled, limits)
       }
     }
   }
