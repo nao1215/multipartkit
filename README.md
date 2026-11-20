@@ -11,28 +11,20 @@
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/nao1215/multipartkit/badge)](https://scorecard.dev/viewer/?uri=github.com/nao1215/multipartkit)
 
 A Gleam library for parsing, querying, validating, and building
-multipart messages on Erlang/BEAM and JavaScript targets. Primary
-target: `multipart/form-data`. Secondary: `multipart/mixed` and
-`multipart/related` per RFC 2046 §5.1.1 grammar.
+multipart messages on Erlang/BEAM and JavaScript. It targets
+`multipart/form-data` first, and also handles `multipart/mixed` and
+`multipart/related` per the RFC 2046 §5.1.1 grammar.
 
-- Pure Gleam — no FFI; runs identically on Erlang/BEAM and JavaScript.
-- Full-body parser, opaque `Form` builder, and incremental streaming
-  parser with safe per-chunk `max_body_bytes` enforcement.
-- `Content-Disposition` parser including RFC 5987 / RFC 8187
-  `filename*` (UTF-8 and ISO-8859-1).
-- Built-in content-type inference — `multipartkit/infer.content_type_from_filename`
-  and `content_type_from_bytes` resolve well-known extensions and
-  magic-byte signatures (`"a.png"` -> `Some("image/png")`, a PNG header
-  -> `Some("image/png")`) by delegating to
-  [`nao1215/mimetype`](https://github.com/nao1215/mimetype), returning
-  `None` for unknown input. Inference into the form builder stays
-  opt-in: `add_file_auto` uses the no-op `default_inferer` (so it never
-  changes a content type implicitly), while
-  `add_file_auto_with(form, ..., infer.builtin_inferer())` opts into the
-  built-in inference, and a custom `Inferer` lets you wire any other
-  library (see
-  [`examples/mimetype_inference`](examples/mimetype_inference)).
-- Conservative default limits, runtime-tunable.
+It is pure Gleam with no FFI. It has a full-body parser, an opaque
+`Form` builder, a streaming parser that enforces `max_body_bytes` per
+chunk, a `Content-Disposition` parser that reads RFC 5987 / RFC 8187
+`filename*` (UTF-8 and ISO-8859-1), and conservative default limits you
+can change at runtime. `multipartkit/infer` guesses a content type from
+a filename or magic bytes through
+[`nao1215/mimetype`](https://github.com/nao1215/mimetype); the form
+builder only uses it when you pass `infer.builtin_inferer()` to
+`add_file_auto_with` (see
+[`examples/mimetype_inference`](examples/mimetype_inference)).
 
 ## Install
 
@@ -40,15 +32,13 @@ target: `multipart/form-data`. Secondary: `multipart/mixed` and
 gleam add multipartkit
 ```
 
-That is all the non-streaming API needs. The streaming parser pulls in
-one extra package; see [Streaming semantics](#streaming-semantics) for
-the install step and the wiring.
+The streaming parser also needs `gleam_yielder`; see
+[Streaming](#streaming).
 
 ## Quick start
 
-The snippet below is the source of `examples/quick_start` verbatim;
-copy it into `src/main.gleam`, run `gleam add multipartkit`, then
-`gleam run`.
+This is [`examples/quick_start`](examples/quick_start), checked against
+the README in CI.
 
 ```gleam
 import gleam/bit_array
@@ -83,10 +73,20 @@ pub fn main() {
 }
 ```
 
+Output of `gleam run` (the boundary is random on each run):
+
+```text
+Content-Type: multipart/form-data; boundary=----multipartkit-y9o53iydy0zm2dxbmbhvbsi9
+title=hello
+avatar filename=cat.png
+avatar size=4
+```
+
+The full API is on [HexDocs](https://hexdocs.pm/multipartkit/).
+
 ## Examples
 
-The [`examples/`](examples/) directory has four self-contained Gleam
-projects you can clone, run, and modify:
+Each directory under [`examples/`](examples/) is a standalone Gleam project:
 
 | Example | Use case |
 |---|---|
@@ -106,17 +106,12 @@ Run them all from the repo root with `just examples`.
 
 ### Filenames are user-controlled
 
-`part.filename(part)` returns the byte sequence the client sent,
-**unsanitised** — including path-traversal sequences (`../`,
-absolute paths like `/etc/passwd`, Windows UNC like `\\server\share`,
-URL-encoded variants like `..%2f..%2fetc%2fpasswd`). Sanitising the
-filename is the consumer's responsibility; multipartkit deliberately
-does not mutate it because the byte-exact original is sometimes the
-right value to keep (e.g. when the client supplies a content-derived
-identifier).
-
-A naive consumer that joins the filename to a server-side path is
-exposed to path traversal:
+`part.filename(part)` returns the bytes the client sent, unsanitised,
+including `../`, absolute paths like `/etc/passwd`, Windows UNC paths
+like `\\server\share`, and URL-encoded forms like
+`..%2f..%2fetc%2fpasswd`. multipartkit leaves the name as sent because
+the exact original is sometimes worth keeping, so sanitising it is up
+to you. Joining it straight onto a server path allows path traversal:
 
 ```gleam
 let assert Ok(part) = mquery.required_file(parts, "upload")
@@ -126,9 +121,8 @@ simplifile.write("./uploads/" <> filename, bytes)
 // ^^^^ attacker-controlled, writes outside ./uploads
 ```
 
-Sanitise before joining, or — strongly preferred — derive the
-server-side path from a content hash so the user-supplied name is
-never on the filesystem:
+Sanitise before joining, or better, build the server path from a
+content hash so the client's name never reaches the filesystem:
 
 ```gleam
 import filepath
@@ -152,42 +146,27 @@ let server_path = filepath.join("./uploads", sha256_of(bytes) <> "." <> extensio
 ### Header-breaking bytes in form-builder values
 
 `form.add_field` / `form.add_file` / `form.add_file_auto[_with]`
-silently strip CR / LF / NUL bytes from values that flow into header
-lines. The strip seals the CRLF-injection vector but loses the
-caller's input — `add_file(_, "fi\nle.png", _, _)` produces a part
-with filename `"file.png"`, a *different valid filename*. For
-callers passing user-typed or upstream data, prefer
-`form.add_field_strict` / `form.add_file_strict`, which return
-`Result(Form, FormError)` and surface the bad input as a typed
-error instead of coercing it.
+silently strip CR / LF / NUL bytes from values that end up in header
+lines. That blocks CRLF injection but changes the input:
+`add_file(_, "fi\nle.png", _, _)` produces a part named `"file.png"`.
+For user-typed or upstream data, use `form.add_field_strict` /
+`form.add_file_strict`, which return `Result(Form, FormError)` instead.
 
-## Streaming semantics
+## Streaming
 
-The streaming parser is opt-in. Add it to your project only when you
-need chunk-at-a-time parsing — the normal full-body API in the Quick
-start above does not depend on it.
+The streaming parser is opt-in and needs one more package:
 
 ```sh
 gleam add gleam_yielder
 ```
 
-`parse_stream` pulls input chunks lazily and enforces `max_body_bytes`
-and `max_part_bytes` incrementally, so an oversized stream — or an
-oversized individual part — is rejected at the chunk that crosses the
-limit, rather than after the whole body has been buffered.
-
-Each `StreamPart.body` is a single-pass yielder that emits the part
-body in fixed-size chunks of up to ~64 KiB (a smaller body fits in a
-single chunk). Consumers can fold over the body chunk-by-chunk —
-forwarding to a file, hash, or downstream stream — without ever
-materialising the entire body as a single application-level
-`BitArray`. Use `stream.drain_body` when you do want the full body in
-memory.
-
-Inside the parser, per-part working memory remains bounded by
-`max_part_bytes`. `from_part` adapts a buffered `Part` into the same
-chunked-yielder shape so that mixed pipelines see a uniform body
-surface.
+`parse_stream` pulls input chunks lazily and rejects an oversized body
+or part at the chunk that crosses `max_body_bytes` or `max_part_bytes`,
+before the rest is buffered. Each `StreamPart.body` is a single-pass
+yielder of chunks up to about 64 KiB, so you can forward a body to a
+file or hash without holding it in memory; `stream.drain_body` collects
+it when you want it whole. `from_part` turns a buffered `Part` into the
+same shape. See [`examples/streaming_parse`](examples/streaming_parse).
 
 ## Public modules
 
@@ -209,9 +188,8 @@ just deps
 just ci
 ```
 
-`just` recipes source `scripts/lib/mise_bootstrap.sh` so `mise activate`
-is not required in the current shell. See
-[`CONTRIBUTING.md`](CONTRIBUTING.md) for the full workflow.
+`mise activate` is not needed in your shell. See
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for the workflow.
 
 ## Testing
 
@@ -243,4 +221,4 @@ sha256sum --check checksums.txt
 
 ## License
 
-Released under the [MIT License](LICENSE) — see the file for details.
+[MIT](LICENSE)
