@@ -410,3 +410,47 @@ pub fn stream_result_does_not_depend_on_the_split_test() -> Nil {
     },
   )
 }
+
+// ---------- Content-Type ----------
+
+// `multipartkit` and `multipartkit/stream` each turn the internal boundary
+// fault into a `MultipartError`. Random Content-Type values reach every
+// fault, so the two must give the same error.
+
+fn content_type_gen() -> Generator(String) {
+  generator.tuple3(
+    generator.element_of([
+      "multipart/form-data", "multipart/mixed", "Multipart/Form-Data",
+      "text/plain", "multipart/", "multipart", "", " multipart/x", "a/b/c",
+    ]),
+    generator.list_of(
+      generator.element_of([
+        "; boundary=b", "; boundary=\"a b\"", "; BOUNDARY=x", "; boundary=",
+        "; boundary=\"<>\"", "; boundary = b", ";", "; charset=utf-8",
+        "; boundary=\"a\\\u{0001}\"", "; =x", " junk", "; boundary=b ",
+      ]),
+      length: generator.range(from: 0, to: 3),
+    ),
+    generator.element_of(["", " ", "\t"]),
+  )
+  |> generator.map(fn(piece) {
+    let #(media_type, parameters, tail) = piece
+    media_type <> string.concat(parameters) <> tail
+  })
+}
+
+pub fn content_type_errors_match_test() -> Nil {
+  metamon.forall(content_type_gen(), fn(content_type) {
+    let limits = multipartkit.default_limits
+    let buffered_error = case multipartkit.parse(<<>>, content_type, limits) {
+      Error(multipartkit.UnexpectedEndOfInput) -> Ok(Nil)
+      Error(error) -> Error(error)
+      Ok(_) -> Ok(Nil)
+    }
+    let streamed_error =
+      stream.parse(yielder.empty(), content_type, limits)
+      |> result.replace(Nil)
+    metamon.classify(label: "valid", when: result.is_ok(streamed_error))
+    assert streamed_error == buffered_error
+  })
+}

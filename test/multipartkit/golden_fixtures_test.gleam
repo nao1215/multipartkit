@@ -11,9 +11,10 @@
 //// areas called out in issue #11:
 ////
 //// - canonical form-data with a text field and a file part
-//// - non-ASCII filenames using RFC 5987 `filename*` (the encoder must
-////   emit BOTH the legacy fallback and the `*=` form, and the parser
-////   must prefer the `*=` form on the round trip)
+//// - a non-ASCII filename sent in RFC 5987 `filename*` form next to an
+////   ASCII fallback, as some clients do: the parser must prefer the `*=`
+////   form. `new_file` itself writes neither (RFC 7578 §4.2); it puts the
+////   UTF-8 filename in the quoted `filename`
 //// - the streaming parser must produce identical output regardless of
 ////   how the input chunks split — delimiters, header blocks, and body
 ////   bytes can land on awkward chunk boundaries in real HTTP streams
@@ -96,13 +97,14 @@ pub fn parser_round_trips_canonical_form_data_body_test() {
 // Fixture 2: RFC 5987 `filename*` — non-ASCII filename
 //
 // "写真.png" UTF-8: E5 86 99 E7 9C 9F (followed by `.png`).
-// On the wire the encoder must emit BOTH:
+// Some clients (and multipartkit before 0.18.0) send both:
 //   filename="__.png"                          (legacy fallback)
 //   filename*=UTF-8''%E5%86%99%E7%9C%9F.png    (RFC 5987 §3.2.1)
 //
-// Per RFC 5987 §3.2.2 a parser that sees both must prefer the `*=`
-// form; multipartkit's parser does so, and the round-trip below
-// confirms `filename` decodes back to `写真.png`.
+// RFC 6266 §4.3 says a recipient that sees both prefers the `*=` form,
+// as Go's mime package and Python's email package do. multipartkit's
+// parser does so, and the test below confirms `filename` decodes to
+// `写真.png`.
 // ---------------------------------------------------------------------------
 
 const fixture_rfc5987_form_data: BitArray = <<

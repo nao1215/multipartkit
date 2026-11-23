@@ -16,9 +16,9 @@ Parsing and building follow RFC 2046 §5.1 and RFC 7578 more closely. Some input
 - A header name must be printable ASCII without spaces or `:` (RFC 5322 §3.6.8). `new_part` returns `InvalidHeaderName` and `parse` returns `InvalidHeader` for one that is not, such as `Content-Disposition :` with a space before the colon, which another parser could read as `Content-Disposition`.
 - `parse` and `stream.parse` unfold a header line that starts with a space or tab into the line before it (RFC 5322 §2.2.3), instead of returning `InvalidHeader`. A continuation line with no header before it is still `InvalidHeader`.
 - A parameter given twice, ignoring case, makes a `Content-Type` `InvalidContentType` (RFC 6838 §4.3) and a `Content-Disposition` `InvalidContentDisposition` (RFC 6266 §4.1). Before, the first one was used, so `boundary=a; boundary=b` or `name="a"; name="admin"` could be read differently by another parser.
-- Both headers accept an empty parameter (`;;` or a trailing `;`, RFC 9110 §5.6.6) and whitespace around `=`.
+- Both headers accept an empty parameter (`;;` or a trailing `;`, RFC 9110 §5.6.6). `Content-Disposition` also accepts whitespace around `=` (RFC 6266 §4.1); a `Content-Type` does not (RFC 9110).
 - A quoted `boundary` that escapes a control character is `InvalidContentType`, as a quoted `Content-Disposition` value already was `InvalidQuotedPair`.
-- A `filename*` value may hold only RFC 5987 `attr-char` characters and `%` escapes. Anything else, such as a space or `'`, is `InvalidContentDisposition`.
+- A `filename*` or `name*` that cannot be decoded, because it holds a character outside RFC 5987 `attr-char` and `%` escapes, names another charset, or decodes to CR, LF or NUL, is ignored and the plain `filename` or `name` is used (RFC 6266 §4.3). Before, it made the whole body fail with `InvalidContentDisposition`, and characters such as a space were accepted.
 - `parse` reads the body up to `max_body_bytes` and reports the first problem in it, as `stream.parse` does. A body over the limit with a bad header before the limit now fails with the header error instead of `BodyTooLarge`.
 - The error variants that hold a `String` have labels, like the others: `InvalidContentType(content_type:)`, `InvalidBoundary(boundary:)`, `UnsupportedMediaType(media_type:)`, `InvalidHeader(line:)`, `InvalidContentDisposition(value:)`, `InvalidQuotedPair(value:)` and `DisallowedContentType(content_type:)`. Positional patterns still compile.
 - The test suite uses metamon 0.14.0.
@@ -28,6 +28,7 @@ Parsing and building follow RFC 2046 §5.1 and RFC 7578 more closely. Some input
 - A part whose blank line is also the line break of the next delimiter, as in `--b\r\n\r\n--b--`, has an empty body. Before, its body was the line break.
 - `--b --` (padding before the closing `--`) is no longer read as the closing delimiter. RFC 2046 allows padding only after the `--`.
 - `parse` and `stream.parse` reject a header line that holds a bare CR or NUL with `InvalidHeader`. Before, the part kept it, and `encode` wrote it back out, where a receiver that ends lines at CR would see an extra header.
+- On JavaScript, a `Content-Disposition` or `Content-Type` with a few thousand parameters, a `filename*` with thousands of `%` escapes, or a header value with thousands of trailing spaces overflowed the stack. The repeated-parameter check also stays linear, so such a value costs milliseconds.
 - `stream.parse` gave different results for the same input depending on how it was split when a limit was reached: a chunk that crossed `max_body_bytes` hid a header or part error before the limit, and transport padding after a delimiter counted towards `max_part_bytes`. `parse` returned `UnexpectedEndOfInput` where `stream.parse` returned `PartTooLarge` for an unfinished part over the limit. Both now give the same result however the input is split.
 
 ## [0.17.0] - 2026-11-23

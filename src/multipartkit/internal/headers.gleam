@@ -111,15 +111,9 @@ fn all_ftext(name: BitArray) -> Bool {
 /// both ends of a header value. `string.trim` would also strip Unicode
 /// whitespace.
 pub fn trim_ows(value: String) -> String {
-  value |> text.skip_ows |> drop_trailing_ows
-}
-
-fn drop_trailing_ows(value: String) -> String {
-  use <- bool.guard(
-    when: !string.ends_with(value, " ") && !string.ends_with(value, "\t"),
-    return: value,
-  )
-  drop_trailing_ows(string.drop_end(value, 1))
+  // Reversing keeps this linear, and needs no recursion that is not a tail
+  // call on JavaScript.
+  value |> text.skip_ows |> string.reverse |> text.skip_ows |> string.reverse
 }
 
 /// Internal: Write headers as `name: value` lines, each ending in CRLF.

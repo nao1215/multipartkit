@@ -7,7 +7,9 @@
 
 import gleam/bool
 import gleam/list
+import gleam/option.{type Option, None, Some}
 import gleam/result
+import gleam/set.{type Set}
 import gleam/string
 
 /// Internal: Skip leading optional whitespace (spaces and tabs) per RFC 7230.
@@ -236,34 +238,59 @@ pub fn find_ci(
 /// Internal: Read `; key=value` parameters until the end of the input.
 ///
 /// As in RFC 9110 §5.6.6 an empty parameter (`;;`, or `;` at the end) is
-/// skipped, and as in RFC 6266 §4.1 whitespace may surround `=`. A
-/// parameter given twice, ignoring case, is `QuotedSyntax`: RFC 6838 §4.3
-/// and RFC 6266 §4.1 make it an error, and two parsers that pick different
-/// copies would read different values.
+/// skipped. Whitespace may surround `=` only when `spaced_equals` is set:
+/// RFC 6266 §4.1 allows it in Content-Disposition, and RFC 9110 does not in
+/// a media type. A parameter given twice, ignoring case, is `QuotedSyntax`:
+/// RFC 6838 §4.3 and RFC 6266 §4.1 make it an error, and two parsers that
+/// pick different copies would read different values.
 pub fn parse_parameters(
   input: String,
+  spaced_equals spaced_equals: Bool,
 ) -> Result(List(#(String, String)), QuotedFault) {
-  parameters_loop(input, [])
+  parameters_loop(input, spaced_equals, [], set.new())
 }
 
 fn parameters_loop(
   input: String,
+  spaced_equals: Bool,
   parameters: List(#(String, String)),
+  // The lowercased names in `parameters`, to find a repeat in linear time.
+  seen: Set(String),
 ) -> Result(List(#(String, String)), QuotedFault) {
+  // No `use` here: the recursive call must stay a tail call, or a value
+  // with thousands of parameters overflows the stack on JavaScript.
+  case next_parameter(input, spaced_equals) {
+    Error(fault) -> Error(fault)
+    Ok(None) -> Ok(list.reverse(parameters))
+    Ok(Some(#(#(key, _) as parameter, rest))) -> {
+      let name = ascii_lowercase(key)
+      case set.contains(seen, name) {
+        True -> Error(QuotedSyntax)
+        False ->
+          parameters_loop(
+            rest,
+            spaced_equals,
+            [parameter, ..parameters],
+            set.insert(seen, name),
+          )
+      }
+    }
+  }
+}
+
+/// Reads the next `; key=value`, skipping empty parameters. `None` at the
+/// end of the input.
+fn next_parameter(
+  input: String,
+  spaced_equals: Bool,
+) -> Result(Option(#(#(String, String), String)), QuotedFault) {
   case skip_ows(input) {
-    "" -> Ok(list.reverse(parameters))
+    "" -> Ok(None)
     ";" <> rest ->
       case skip_ows(rest) {
-        "" -> Ok(list.reverse(parameters))
-        ";" <> _ as rest -> parameters_loop(rest, parameters)
-        rest -> {
-          use #(parameter, rest) <- result.try(parse_parameter(rest))
-          use <- bool.guard(
-            when: result.is_ok(find_ci(parameters, parameter.0)),
-            return: Error(QuotedSyntax),
-          )
-          parameters_loop(rest, [parameter, ..parameters])
-        }
+        "" -> Ok(None)
+        ";" <> _ as rest -> next_parameter(rest, spaced_equals)
+        rest -> parse_parameter(rest, spaced_equals) |> result.map(Some)
       }
     _ -> Error(QuotedSyntax)
   }
@@ -271,13 +298,18 @@ fn parameters_loop(
 
 fn parse_parameter(
   input: String,
+  spaced_equals: Bool,
 ) -> Result(#(#(String, String), String), QuotedFault) {
+  let skip = case spaced_equals {
+    True -> skip_ows
+    False -> fn(input) { input }
+  }
   case read_token(input) {
     #("", _) -> Error(QuotedSyntax)
     #(key, rest) ->
-      case skip_ows(rest) {
+      case skip(rest) {
         "=" <> rest -> {
-          use #(value, rest) <- result.try(read_token_or_quoted(skip_ows(rest)))
+          use #(value, rest) <- result.try(read_token_or_quoted(skip(rest)))
           Ok(#(#(key, value), rest))
         }
         _ -> Error(QuotedSyntax)
@@ -307,7 +339,8 @@ pub fn boundary(content_type: String) -> Result(String, BoundaryFault) {
     return: Error(NotMultipart(media_type)),
   )
   use found <- result.try(
-    parse_parameters(parameters) |> result.replace_error(MalformedContentType),
+    parse_parameters(parameters, spaced_equals: False)
+    |> result.replace_error(MalformedContentType),
   )
   case find_ci(found, "boundary") {
     Error(Nil) -> Error(NoBoundary)

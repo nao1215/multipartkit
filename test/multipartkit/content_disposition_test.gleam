@@ -71,18 +71,20 @@ pub fn parse_filename_star_takes_precedence_test() {
   parsed.filename |> should.equal(Some("star.txt"))
 }
 
-pub fn parse_filename_star_unsupported_charset_rejected_test() {
-  let assert Error(InvalidContentDisposition(_)) =
+pub fn parse_filename_star_unsupported_charset_is_ignored_test() {
+  let assert Ok(parsed) =
     multipartkit.parse_content_disposition(
-      "form-data; name=\"x\"; filename*=BIG5''something",
+      "form-data; name=\"x\"; filename=\"plain.txt\"; filename*=BIG5''something",
     )
+  parsed.filename |> should.equal(Some("plain.txt"))
 }
 
-pub fn parse_filename_star_invalid_pct_rejected_test() {
-  let assert Error(InvalidContentDisposition(_)) =
+pub fn parse_filename_star_invalid_pct_is_ignored_test() {
+  let assert Ok(parsed) =
     multipartkit.parse_content_disposition(
       "form-data; name=\"x\"; filename*=UTF-8''%ZZbad",
     )
+  parsed.filename |> should.equal(None)
 }
 
 pub fn parse_unparseable_returns_error_test() {

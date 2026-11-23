@@ -3,8 +3,9 @@
 //// by section against the code.
 
 import gleam/bit_array
+import gleam/int
 import gleam/list
-import gleam/option.{Some}
+import gleam/option.{None, Some}
 import gleam/string
 import gleam/yielder
 import multipartkit.{
@@ -159,13 +160,25 @@ pub fn whitespace_around_the_equals_sign_test() {
 
 // RFC 5987 §3.2.1: value-chars := *( pct-encoded / attr-char ).
 
-pub fn ext_value_with_characters_outside_attr_char_is_rejected_test() {
-  let space = "attachment; filename*=\"UTF-8''a b.txt\""
-  assert multipartkit.parse_content_disposition(space)
-    == Error(InvalidContentDisposition(space))
-  let quote = "attachment; filename*=UTF-8''a'b.txt"
-  assert multipartkit.parse_content_disposition(quote)
-    == Error(InvalidContentDisposition(quote))
+// RFC 6266 §4.3: a recipient that cannot decode `filename*` uses
+// `filename`. The whole body must not fail because of it.
+
+pub fn ext_value_with_characters_outside_attr_char_is_ignored_test() {
+  let assert Ok(parsed) =
+    multipartkit.parse_content_disposition(
+      "attachment; filename=\"a b.txt\"; filename*=\"UTF-8''a b.txt\"",
+    )
+  assert parsed.filename == Some("a b.txt")
+  let assert Ok(parsed) =
+    multipartkit.parse_content_disposition(
+      "attachment; filename*=UTF-8''a'b.txt",
+    )
+  assert parsed.filename == None
+  let body = <<
+    "--b\r\nContent-Disposition: form-data; name=\"f\"; filename=\"a b\"; filename*=\"UTF-8''a b\"\r\n\r\nx\r\n--b--",
+  >>
+  let assert Ok([part]) = parse(body)
+  assert multipartkit.filename(part) == Some("a b")
 }
 
 // RFC 6838 §4.3: a parameter given twice is an error. Two `boundary`
@@ -181,6 +194,36 @@ pub fn duplicate_boundary_parameter_is_rejected_test() {
 
 // RFC 9110 §5.6.6: parameters := *( OWS ";" OWS [ parameter ] ), so an
 // empty parameter is allowed.
+
+// RFC 9110 §5.6.6: no whitespace around `=` in a media type parameter, so
+// `boundary = b` is not read the way a strict parser in front would not.
+
+pub fn whitespace_around_equals_in_content_type_is_rejected_test() {
+  let content_type = "multipart/form-data; boundary = b"
+  assert multipartkit.parse(
+      <<"--b--">>,
+      content_type,
+      multipartkit.default_limits,
+    )
+    == Error(InvalidContentType(content_type))
+}
+
+// A Content-Disposition with thousands of parameters is checked for
+// repeats in linear time.
+
+pub fn many_disposition_parameters_are_checked_quickly_test() {
+  let parameters =
+    list.repeat(Nil, 3001)
+    |> list.index_map(fn(_, i) { "; k" <> int.to_string(i) <> "=v" })
+    |> string.concat
+  let assert Ok(parsed) =
+    multipartkit.parse_content_disposition("form-data" <> parameters)
+  assert list.length(parsed.parameters) == 3001
+  let assert Error(InvalidContentDisposition(_)) =
+    multipartkit.parse_content_disposition(
+      "form-data" <> parameters <> "; K3000=w",
+    )
+}
 
 pub fn empty_content_type_parameters_are_allowed_test() {
   let content_type = "multipart/form-data;; boundary=b;"
@@ -346,4 +389,24 @@ pub fn transport_padding_does_not_count_as_part_body_test() {
 fn bit_array_text(body: BitArray) -> String {
   let assert Ok(text) = bit_array.to_string(body)
   text
+}
+
+// Recursion through `use` is not a tail call, so these overflowed the
+// stack on JavaScript.
+
+pub fn long_trailing_whitespace_is_trimmed_test() {
+  let assert Ok(part) =
+    multipartkit.new_part(
+      headers: [#("X-Note", "a" <> string.repeat(" ", 20_000))],
+      body: <<>>,
+    )
+  assert multipartkit.header(part, "x-note") == Ok("a")
+}
+
+pub fn long_extended_value_is_decoded_test() {
+  let assert Ok(parsed) =
+    multipartkit.parse_content_disposition(
+      "attachment; filename*=UTF-8''" <> string.repeat("%41", 10_000),
+    )
+  assert parsed.filename == Some(string.repeat("A", 10_000))
 }

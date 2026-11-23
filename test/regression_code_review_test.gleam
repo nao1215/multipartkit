@@ -1,11 +1,11 @@
 //// Regression tests for problems found in review of the API rework.
 
-import gleam/option.{None}
+import gleam/option.{None, Some}
 import gleam/yielder
 import gleeunit/should
 import multipartkit.{
-  BodyTooLarge, HeaderTooLarge, InvalidContentDisposition, InvalidHeaderName,
-  InvalidHeaderValue, InvalidQuotedPair,
+  BodyTooLarge, HeaderTooLarge, InvalidHeaderName, InvalidHeaderValue,
+  InvalidQuotedPair,
 }
 import multipartkit/stream
 
@@ -78,10 +78,13 @@ pub fn unterminated_headers_hit_the_header_limit_test() {
   yielder.to_list(parts) |> should.equal([Error(HeaderTooLarge(5))])
 }
 
-pub fn extended_filename_rejects_control_bytes_test() {
-  let value = "form-data; name=\"f\"; filename*=UTF-8''a%0D%0Ab%00"
-  multipartkit.parse_content_disposition(value)
-  |> should.equal(Error(InvalidContentDisposition(value)))
+pub fn extended_filename_with_control_bytes_is_not_used_test() {
+  // A `filename*` that decodes to CR, LF or NUL is ignored, so the part
+  // falls back to the plain `filename` and never holds those bytes.
+  let value =
+    "form-data; name=\"f\"; filename=\"ab\"; filename*=UTF-8''a%0D%0Ab%00"
+  let assert Ok(parsed) = multipartkit.parse_content_disposition(value)
+  parsed.filename |> should.equal(Some("ab"))
 }
 
 pub fn control_only_name_is_reported_as_header_breaking_test() {

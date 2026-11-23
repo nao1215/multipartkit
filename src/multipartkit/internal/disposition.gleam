@@ -70,10 +70,12 @@ fn percent_decode(
 ) -> Result(BitArray, Nil) {
   case remaining {
     [] -> Ok(acc)
-    ["%", high, low, ..rest] -> {
-      use byte <- result.try(hex_pair(high, low))
-      percent_decode(rest, <<acc:bits, byte>>)
-    }
+    // A plain `case`, so the recursion is a tail call on JavaScript too.
+    ["%", high, low, ..rest] ->
+      case hex_pair(high, low) {
+        Ok(byte) -> percent_decode(rest, <<acc:bits, byte>>)
+        Error(Nil) -> Error(Nil)
+      }
     ["%", ..] -> Error(Nil)
     [other, ..rest] ->
       case is_attr_char(other) {

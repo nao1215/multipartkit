@@ -562,10 +562,12 @@ fn parse_part_headers(block: BitArray) -> Result(Part, MultipartError) {
 ///
 /// Parameter names ignore case, and whitespace may surround `=`.
 ///
+/// A `filename*` (or `name*`) that is not RFC 5987 UTF-8 or ISO-8859-1, or
+/// that decodes to CR, LF or NUL, is ignored, and `filename` is used.
+///
 /// Returns `Error(InvalidQuotedPair(value))` when a quoted string escapes a
 /// control character, and `Error(InvalidContentDisposition(value))` for any
-/// other malformed value: a parameter given twice, or a `filename*` that is
-/// not RFC 5987 UTF-8 or ISO-8859-1 or decodes to CR, LF or NUL.
+/// other malformed value, including a parameter given twice.
 ///
 /// ## Examples
 ///
@@ -592,7 +594,7 @@ pub fn parse_content_disposition(
     #("", _) -> Error(invalid)
     #(token, rest) -> {
       use parameters <- result.try(
-        text.parse_parameters(rest)
+        text.parse_parameters(rest, spaced_equals: True)
         |> result.map_error(fn(fault) {
           case fault {
             QuotedPairInvalid -> InvalidQuotedPair(value)
@@ -600,32 +602,27 @@ pub fn parse_content_disposition(
           }
         }),
       )
-      use name <- result.try(pick_parameter(parameters, "name", invalid))
-      use filename <- result.try(pick_parameter(parameters, "filename", invalid))
       Ok(ContentDisposition(
         disposition: text.ascii_lowercase(token),
-        name:,
-        filename:,
+        name: pick_parameter(parameters, "name"),
+        filename: pick_parameter(parameters, "filename"),
         parameters:,
       ))
     }
   }
 }
 
-/// Returns the decoded `key*` parameter if present, otherwise the plain `key`
-/// parameter.
+/// Returns the decoded `key*` parameter if present and valid, otherwise the
+/// plain `key` parameter. As RFC 6266 §4.3 suggests, a `key*` that cannot be
+/// decoded is ignored rather than failing the whole body.
 fn pick_parameter(
   parameters: List(#(String, String)),
   key: String,
-  invalid: MultipartError,
-) -> Result(Option(String), MultipartError) {
-  case text.find_ci(parameters, key <> "*") {
-    Ok(raw) ->
-      disposition.decode_extended_value(raw)
-      |> result.map(Some)
-      |> result.replace_error(invalid)
-    Error(Nil) -> Ok(option.from_result(text.find_ci(parameters, key)))
-  }
+) -> Option(String) {
+  text.find_ci(parameters, key <> "*")
+  |> result.try(disposition.decode_extended_value)
+  |> result.lazy_or(fn() { text.find_ci(parameters, key) })
+  |> option.from_result
 }
 
 // Querying parts --------------------------------------------------------------

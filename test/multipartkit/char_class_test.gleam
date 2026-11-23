@@ -39,12 +39,13 @@ pub fn ext_value_accepts_exactly_attr_chars_test() {
       _ -> char(code)
     }
     let value = "attachment; filename*=\"UTF-8''a" <> escaped <> "b\""
-    case multipartkit.parse_content_disposition(value), is_attr_char(code) {
-      Ok(parsed), True ->
-        parsed.filename |> should.equal(Some("a" <> char(code) <> "b"))
-      Error(_), False -> Nil
-      _, valid -> should.equal(#(code, valid), #(code, !valid))
+    // A value that is not valid is ignored, so there is no filename.
+    let assert Ok(parsed) = multipartkit.parse_content_disposition(value)
+    let expected = case is_attr_char(code) {
+      True -> Some("a" <> char(code) <> "b")
+      False -> None
     }
+    parsed.filename |> should.equal(expected)
   })
 }
 
