@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+Parsing and building follow RFC 2046 §5.1 and RFC 7578 more closely. Some input that was accepted before is now rejected, so code that builds parts from user input may need to handle more errors.
+
+- `new_file` writes a non-ASCII filename as UTF-8 in the quoted `filename` parameter, as browsers do, and no longer adds a `filename*` parameter or an ASCII fallback with `_`. RFC 7578 §4.2 forbids `filename*` in form data. `parse` still reads `filename*` when a client sends it.
+- `encode` returns `InvalidBoundary(boundary)` when a header or body line of a part starts with `--` and the boundary, which RFC 2046 §5.1.1 forbids and a receiver would read as a delimiter. `stream.encode` gives the same error item when it reaches such a line, even across chunks, and `encode_form` draws a new boundary.
+- A header name must be printable ASCII without spaces or `:` (RFC 5322 §3.6.8). `new_part` returns `InvalidHeaderName` and `parse` returns `InvalidHeader` for one that is not, such as `Content-Disposition :` with a space before the colon, which another parser could read as `Content-Disposition`.
+- `parse` and `stream.parse` unfold a header line that starts with a space or tab into the line before it (RFC 5322 §2.2.3), instead of returning `InvalidHeader`. A continuation line with no header before it is still `InvalidHeader`.
+- A parameter given twice, ignoring case, makes a `Content-Type` `InvalidContentType` (RFC 6838 §4.3) and a `Content-Disposition` `InvalidContentDisposition` (RFC 6266 §4.1). Before, the first one was used, so `boundary=a; boundary=b` or `name="a"; name="admin"` could be read differently by another parser.
+- Both headers accept an empty parameter (`;;` or a trailing `;`, RFC 9110 §5.6.6) and whitespace around `=`.
+- A quoted `boundary` that escapes a control character is `InvalidContentType`, as a quoted `Content-Disposition` value already was `InvalidQuotedPair`.
+- A `filename*` value may hold only RFC 5987 `attr-char` characters and `%` escapes. Anything else, such as a space or `'`, is `InvalidContentDisposition`.
+- `parse` reads the body up to `max_body_bytes` and reports the first problem in it, as `stream.parse` does. A body over the limit with a bad header before the limit now fails with the header error instead of `BodyTooLarge`.
+- The error variants that hold a `String` have labels, like the others: `InvalidContentType(content_type:)`, `InvalidBoundary(boundary:)`, `UnsupportedMediaType(media_type:)`, `InvalidHeader(line:)`, `InvalidContentDisposition(value:)`, `InvalidQuotedPair(value:)` and `DisallowedContentType(content_type:)`. Positional patterns still compile.
+- The test suite uses metamon 0.14.0.
+
+### Fixed
+
+- A part whose blank line is also the line break of the next delimiter, as in `--b\r\n\r\n--b--`, has an empty body. Before, its body was the line break.
+- `--b --` (padding before the closing `--`) is no longer read as the closing delimiter. RFC 2046 allows padding only after the `--`.
+- `parse` and `stream.parse` reject a header line that holds a bare CR or NUL with `InvalidHeader`. Before, the part kept it, and `encode` wrote it back out, where a receiver that ends lines at CR would see an extra header.
+- `stream.parse` gave different results for the same input depending on how it was split when a limit was reached: a chunk that crossed `max_body_bytes` hid a header or part error before the limit, and transport padding after a delimiter counted towards `max_part_bytes`. `parse` returned `UnexpectedEndOfInput` where `stream.parse` returned `PartTooLarge` for an unfinished part over the limit. Both now give the same result however the input is split.
+
 ## [0.17.0] - 2026-11-23
 
 ### Changed

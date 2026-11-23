@@ -70,6 +70,17 @@ pub fn drop(buf: BitArray, from: Int) -> BitArray {
   }
 }
 
+/// Internal: True when the last byte of `buf` is CR.
+pub fn ends_with_cr(buf: BitArray) -> Bool {
+  let size = bit_array.byte_size(buf)
+  size > 0 && bit_array.slice(buf, size - 1, 1) == Ok(<<13>>)
+}
+
+/// Internal: True when `buf` starts with `prefix`.
+pub fn starts_with(buf: BitArray, prefix: BitArray) -> Bool {
+  bit_array.slice(buf, 0, bit_array.byte_size(prefix)) == Ok(prefix)
+}
+
 /// Internal: Locate the blank line that terminates a header block inside
 /// `buf` starting at line offset `from`.
 ///

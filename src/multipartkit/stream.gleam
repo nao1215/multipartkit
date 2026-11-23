@@ -7,12 +7,13 @@
 import gleam/bit_array
 import gleam/bool
 import gleam/int
-import gleam/option.{type Option}
+import gleam/option.{type Option, Some}
 import gleam/result
 import gleam/yielder.{type Yielder}
 import multipartkit.{
   type Limits, type MultipartError, type Part, BodyTooLarge, HeaderTooLarge,
-  InvalidBoundary, PartTooLarge, TooManyParts, UnexpectedEndOfInput,
+  InvalidBoundary, InvalidContentType, InvalidHeader, MissingBoundary,
+  PartTooLarge, TooManyParts, UnexpectedEndOfInput, UnsupportedMediaType,
 }
 import multipartkit/internal/bytes
 import multipartkit/internal/headers as header_block
@@ -99,7 +100,7 @@ pub fn parse(
   content_type: String,
   limits: Limits,
 ) -> Result(Yielder(Result(StreamPart, MultipartError)), MultipartError) {
-  use boundary <- result.map(multipartkit.boundary(content_type))
+  use boundary <- result.map(read_boundary(content_type))
   let initial =
     State(
       buffer: <<>>,
@@ -109,17 +110,33 @@ pub fn parse(
       pattern: scan.dash_pattern(boundary),
       limits:,
       parts_count: 0,
+      over_limit: False,
       started: False,
       done: False,
     )
   yielder.unfold(initial, step)
 }
 
+// The same errors as `multipartkit.parse`.
+fn read_boundary(content_type: String) -> Result(String, MultipartError) {
+  text.boundary(content_type)
+  |> result.map_error(fn(fault) {
+    case fault {
+      text.MalformedContentType -> InvalidContentType(content_type)
+      text.NotMultipart(media_type) -> UnsupportedMediaType(media_type)
+      text.NoBoundary -> MissingBoundary
+      text.BadBoundary(boundary) -> InvalidBoundary(boundary)
+    }
+  })
+}
+
 /// Encodes parts with the given boundary as a yielder of byte chunks.
 ///
 /// An invalid boundary gives a single `Error(InvalidBoundary(boundary))`, as
-/// `multipartkit.encode` does. An error from a part's body is passed on and
-/// ends the yielder.
+/// `multipartkit.encode` does. A header or body line that starts with `--`
+/// and the boundary is found as it is written, and gives
+/// `Error(InvalidBoundary(boundary))` after the chunks before it. An error
+/// from a part's body is passed on. Either error ends the yielder.
 ///
 pub fn encode(
   parts: Yielder(StreamPart),
@@ -130,21 +147,43 @@ pub fn encode(
     return: yielder.single(Error(InvalidBoundary(boundary))),
   )
   let delimiter = <<"--":utf8, boundary:utf8, "\r\n":utf8>>
+  let pattern = scan.dash_pattern(boundary)
+  let collision = Error(InvalidBoundary(boundary))
   parts
   |> yielder.flat_map(fn(part) {
-    let head = <<
-      delimiter:bits,
-      header_block.encode_block(part.headers):bits,
-      "\r\n":utf8,
-    >>
-    yielder.single(Ok(head))
-    |> yielder.append(part.body)
-    |> yielder.append(yielder.single(Ok(<<"\r\n":utf8>>)))
+    let headers = header_block.encode_block(part.headers)
+    case scan.check_line_starts(Some(<<>>), headers, pattern) {
+      Error(Nil) -> yielder.single(collision)
+      Ok(_) ->
+        yielder.single(Ok(<<delimiter:bits, headers:bits, "\r\n":utf8>>))
+        |> yielder.append(check_body(part.body, pattern, collision))
+        |> yielder.append(yielder.single(Ok(<<"\r\n":utf8>>)))
+    }
   })
   |> yielder.append(
     yielder.single(Ok(<<"--":utf8, boundary:utf8, "--\r\n":utf8>>)),
   )
   |> stop_after_first_error
+}
+
+/// Passes the body chunks on, and replaces the first chunk in which a line
+/// starts with the dash-boundary by `collision`.
+fn check_body(
+  body: Yielder(Result(BitArray, MultipartError)),
+  pattern: BitArray,
+  collision: Result(BitArray, MultipartError),
+) -> Yielder(Result(BitArray, MultipartError)) {
+  // The body starts a line, after the blank line that ends the headers.
+  yielder.transform(body, Some(<<>>), fn(carry, item) {
+    case item {
+      Error(error) -> yielder.Next(Error(error), carry)
+      Ok(chunk) ->
+        case scan.check_line_starts(carry, chunk, pattern) {
+          Ok(carry) -> yielder.Next(item, carry)
+          Error(Nil) -> yielder.Next(collision, carry)
+        }
+    }
+  })
 }
 
 fn stop_after_first_error(
@@ -202,6 +241,10 @@ type State {
     pattern: BitArray,
     limits: Limits,
     parts_count: Int,
+    // Whether a byte past max_body_bytes was pulled. The buffer stops at the
+    // limit, and needing a byte past it is BodyTooLarge, as in
+    // multipartkit.parse.
+    over_limit: Bool,
     // Whether the first delimiter has been found, and whether the yielder
     // has finished.
     started: Bool,
@@ -212,7 +255,6 @@ type State {
 type PullOutcome {
   Pulled(state: State)
   Exhausted
-  OverBody
 }
 
 type PartOutcome {
@@ -238,13 +280,13 @@ fn step_find_first(
     // A body with no parts. The epilogue still counts against
     // max_body_bytes, as in parse_body.
     scan.Found(_, scan.Closing, _) ->
-      case drain_epilogue(state.chunks, state.bytes_pulled, state.limits) {
+      case drain_epilogue(state) {
         Ok(Nil) -> yielder.Done
         Error(error) -> halt_with(state, error)
       }
     scan.Found(_, scan.Delimiter, after_first) ->
       step_produce_next(State(..state, started: True, cursor: after_first))
-    scan.Incomplete -> pull_then(state, step_find_first)
+    scan.Incomplete(_) -> pull_then(state, step_find_first)
   }
 }
 
@@ -262,10 +304,13 @@ fn pull_then(
   state: State,
   continue: fn(State) -> yielder.Step(Result(StreamPart, MultipartError), State),
 ) -> yielder.Step(Result(StreamPart, MultipartError), State) {
+  use <- bool.guard(
+    when: state.over_limit,
+    return: halt_with(state, BodyTooLarge(state.limits.max_body_bytes)),
+  )
   case pull_chunk(state) {
     Pulled(next) -> continue(next)
     Exhausted -> halt_with(state, UnexpectedEndOfInput)
-    OverBody -> halt_with(state, BodyTooLarge(state.limits.max_body_bytes))
   }
 }
 
@@ -280,19 +325,27 @@ fn pull_chunk(state: State) -> PullOutcome {
   case yielder.step(state.chunks) {
     yielder.Done -> Exhausted
     yielder.Next(chunk, rest) -> {
+      let limit = state.limits.max_body_bytes
       let pulled = state.bytes_pulled + bit_array.byte_size(chunk)
-      case pulled > state.limits.max_body_bytes {
-        True -> OverBody
-        False ->
-          Pulled(
-            State(
-              ..state,
-              buffer: bit_array.append(state.buffer, chunk),
-              bytes_pulled: pulled,
-              chunks: rest,
-            ),
-          )
+      // Keep only the bytes up to the limit, so that a problem before it is
+      // still found, whichever chunk the limit falls in.
+      let #(chunk, pulled, over_limit) = case pulled > limit {
+        True -> #(
+          bytes.slice_or_empty(chunk, 0, int.max(limit - state.bytes_pulled, 0)),
+          int.max(limit, state.bytes_pulled),
+          True,
+        )
+        False -> #(chunk, pulled, False)
       }
+      Pulled(
+        State(
+          ..state,
+          buffer: bit_array.append(state.buffer, chunk),
+          bytes_pulled: pulled,
+          chunks: rest,
+          over_limit:,
+        ),
+      )
     }
   }
 }
@@ -300,18 +353,15 @@ fn pull_chunk(state: State) -> PullOutcome {
 fn parse_one_part(state: State) -> PartOutcome {
   case bytes.find_blank_line(state.buffer, state.cursor) {
     // Without a blank line yet, fail once the buffered headers are already
-    // over the limit instead of pulling the whole body.
-    Error(Nil) ->
-      case
-        multipartkit.unterminated_headers(
-          state.buffer,
-          state.cursor,
-          state.limits,
-        )
-      {
-        HeaderTooLarge(_) as error -> Failed(error)
-        _ -> NeedMore
+    // over the limit instead of pulling the whole body, as
+    // multipartkit.parse does for a header block that never ends.
+    Error(Nil) -> {
+      let limit = state.limits.max_header_bytes
+      case bit_array.byte_size(state.buffer) - state.cursor > limit {
+        True -> Failed(HeaderTooLarge(limit))
+        False -> NeedMore
       }
+    }
     Ok(#(blank_at, body_start)) -> {
       let limit = state.limits.max_header_bytes
       use <- bool.guard(
@@ -324,12 +374,20 @@ fn parse_one_part(state: State) -> PartOutcome {
           state.cursor,
           blank_at - state.cursor,
         )
-      case multipartkit.parse_part_headers(block) {
+      case parse_part_headers(block) {
         Error(error) -> Failed(error)
         Ok(head) -> parse_body(state, body_start, head)
       }
     }
   }
+}
+
+/// Parses one part's header block into a part with an empty body, as
+/// `multipartkit.parse` does. `new_part` reads the name, filename and
+/// content type, and accepts every header `parse_block` returns.
+fn parse_part_headers(block: BitArray) -> Result(Part, MultipartError) {
+  use headers <- result.try(header_block.parse_block(block, InvalidHeader))
+  multipartkit.new_part(headers:, body: <<>>)
 }
 
 fn parse_body(state: State, body_start: Int, head: Part) -> PartOutcome {
@@ -355,7 +413,7 @@ fn parse_body(state: State, body_start: Int, head: Part) -> PartOutcome {
         // counts against max_body_bytes, as in multipartkit.parse, so the
         // result does not depend on how the input was split.
         scan.Closing ->
-          case drain_epilogue(next.chunks, next.bytes_pulled, next.limits) {
+          case drain_epilogue(next) {
             Error(error) -> Failed(error)
             Ok(Nil) ->
               PartReady(
@@ -365,32 +423,34 @@ fn parse_body(state: State, body_start: Int, head: Part) -> PartOutcome {
           }
       }
     }
-    scan.Incomplete -> {
-      // Everything before the last `pattern + 4` bytes is body: the next
-      // delimiter is CRLF, `--` and the boundary. So fail as soon as that
-      // much is over the limit, without pulling more chunks.
-      let safety = bit_array.byte_size(state.pattern) + 4
-      let confirmed = bit_array.byte_size(state.buffer) - body_start - safety
-      case confirmed > limit {
+    // The bytes before body_until are body whatever comes next, so fail
+    // as soon as they are over the limit, without pulling more chunks.
+    scan.Incomplete(body_until) ->
+      case body_until - body_start > limit {
         True -> Failed(PartTooLarge(limit))
         False -> NeedMore
       }
-    }
   }
 }
 
-fn drain_epilogue(
+fn drain_epilogue(state: State) -> Result(Nil, MultipartError) {
+  let limit = state.limits.max_body_bytes
+  use <- bool.guard(when: state.over_limit, return: Error(BodyTooLarge(limit)))
+  drain_loop(state.chunks, state.bytes_pulled, limit)
+}
+
+fn drain_loop(
   chunks: Yielder(BitArray),
   pulled: Int,
-  limits: Limits,
+  limit: Int,
 ) -> Result(Nil, MultipartError) {
   case yielder.step(chunks) {
     yielder.Done -> Ok(Nil)
     yielder.Next(chunk, rest) -> {
       let pulled = pulled + bit_array.byte_size(chunk)
-      case pulled > limits.max_body_bytes {
-        True -> Error(BodyTooLarge(limits.max_body_bytes))
-        False -> drain_epilogue(rest, pulled, limits)
+      case pulled > limit {
+        True -> Error(BodyTooLarge(limit))
+        False -> drain_loop(rest, pulled, limit)
       }
     }
   }

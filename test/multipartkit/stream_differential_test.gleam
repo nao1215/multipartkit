@@ -6,6 +6,8 @@
 
 import gleam/bit_array
 import gleam/list
+import gleam/result
+import gleam/string
 import gleam/yielder
 import metamon
 import metamon/generator.{type Generator}
@@ -276,4 +278,135 @@ fn header_size(seen: Seen) -> Int {
       False -> acc
     }
   })
+}
+
+// ---------- raw messages ----------
+
+// Messages written by hand from the pieces of the RFC 2046 §5.1.1 grammar
+// that `encode_form` never writes: LF-only lines, transport padding (and
+// padding before the closing `--`, which is not a delimiter), preambles,
+// epilogues, folded and malformed headers, parts with no headers, and an
+// empty body whose blank line is also the delimiter's line break.
+
+fn raw_boundary_gen() -> Generator(String) {
+  generator.element_of(["b", "simple boundary", "--x", "a'()+_,-./:=?"])
+}
+
+fn line_end_gen() -> Generator(String) {
+  generator.element_of(["\r\n", "\n"])
+}
+
+fn header_line_gen() -> Generator(String) {
+  generator.element_of([
+    "Content-Disposition: form-data; name=\"a\"",
+    "content-disposition: form-data; name=b; filename=\"f.txt\"",
+    "Content-Disposition: form-data;\r\n name=\"folded\"",
+    "Content-Disposition: form-data;\n\tname=\"lf-folded\"",
+    "Content-Type: text/plain",
+    "Content-Disposition: form-data; name=\"a\"; name=\"a\"",
+    "X-Space : 1",
+    "no colon",
+    " leading continuation",
+    "X-Cr: a\rb",
+  ])
+}
+
+fn padding_gen() -> Generator(String) {
+  generator.element_of(["", "", " ", "\t ", " --"])
+}
+
+fn raw_part_gen() -> Generator(String) {
+  generator.tuple4(
+    generator.list_of(
+      generator.tuple2(header_line_gen(), line_end_gen()),
+      length: generator.range(from: 0, to: 3),
+    ),
+    line_end_gen(),
+    generator.element_of(["", "x", "line\r\nline", "-", "--", "\r", "\n"]),
+    generator.element_of(["\r\n", "\n", ""]),
+  )
+  |> generator.map(fn(piece) {
+    let #(headers, blank, body, before_delimiter) = piece
+    let headers =
+      list.map(headers, fn(header) { header.0 <> header.1 }) |> string.concat
+    headers <> blank <> body <> before_delimiter
+  })
+}
+
+fn raw_message_gen() -> Generator(#(String, BitArray)) {
+  generator.tuple4(
+    raw_boundary_gen(),
+    generator.element_of(["", "preamble\r\n", "x\n", "--bx\r\n"]),
+    generator.list_of(
+      generator.tuple2(padding_gen(), raw_part_gen()),
+      length: generator.range(from: 0, to: 3),
+    ),
+    generator.tuple2(
+      padding_gen(),
+      generator.element_of(["", "\r\n", "\r\nepilogue", "\n--b\r\n", "x"]),
+    ),
+  )
+  |> generator.map(fn(piece) {
+    let #(boundary, preamble, parts, #(close_padding, epilogue)) = piece
+    let dash = "--" <> boundary
+    let parts =
+      list.map(parts, fn(part) { dash <> part.0 <> "\r\n" <> part.1 })
+      |> string.concat
+    let body = preamble <> parts <> dash <> "--" <> close_padding <> epilogue
+    #(
+      "multipart/form-data; boundary=\"" <> boundary <> "\"",
+      bit_array.from_string(body),
+    )
+  })
+}
+
+pub fn stream_matches_buffered_for_raw_messages_test() -> Nil {
+  metamon.forall(generator.tuple2(raw_message_gen(), sizes_gen()), fn(input) {
+    let #(#(content_type, body), sizes) = input
+    let limits = multipartkit.default_limits
+    metamon.classify(
+      label: "accepted",
+      when: result.is_ok(buffered(body, content_type, limits)),
+    )
+    assert streamed(chunk(body, sizes), content_type, limits)
+      == buffered(body, content_type, limits)
+  })
+}
+
+/// The same with small limits, so that every limit error is reached on
+/// raw input too.
+pub fn stream_matches_buffered_for_raw_messages_at_small_limits_test() -> Nil {
+  let small = generator.int(generator.range(from: 0, to: 64))
+  metamon.forall(
+    generator.tuple3(
+      raw_message_gen(),
+      sizes_gen(),
+      generator.tuple4(
+        generator.int(generator.range(from: 0, to: 400)),
+        small,
+        generator.int(generator.range(from: 0, to: 3)),
+        small,
+      ),
+    ),
+    fn(input) {
+      let #(#(content_type, body), sizes, #(b, p, n, h)) = input
+      let limits = multipartkit.Limits(b, p, n, h)
+      assert streamed(chunk(body, sizes), content_type, limits)
+        == buffered(body, content_type, limits)
+    },
+  )
+}
+
+/// Chunking is not observable: two different splits of the same input
+/// give the same result.
+pub fn stream_result_does_not_depend_on_the_split_test() -> Nil {
+  metamon.forall(
+    generator.tuple3(raw_message_gen(), sizes_gen(), sizes_gen()),
+    fn(input) {
+      let #(#(content_type, body), first, second) = input
+      let limits = multipartkit.default_limits
+      assert streamed(chunk(body, first), content_type, limits)
+        == streamed(chunk(body, second), content_type, limits)
+    },
+  )
 }

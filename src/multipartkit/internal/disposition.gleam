@@ -10,15 +10,14 @@ import multipartkit/internal/text
 
 /// Internal: Build the `Content-Disposition` value for a form-data part.
 ///
-/// A filename made of printable ASCII uses the plain `filename="..."` form.
-/// Any other filename also gets an RFC 5987 `filename*=UTF-8''...` parameter,
-/// with `_` replacing the non-ASCII characters in the plain one. The caller
-/// rejects CR, LF and NUL before calling this.
+/// The name and filename are quoted strings in UTF-8, as browsers send
+/// them. RFC 7578 §4.2 forbids the RFC 5987 `filename*` parameter here. The
+/// caller rejects CR, LF and NUL before calling this.
 pub fn build_form_data_value(name: String, filename: Option(String)) -> String {
   let base = "form-data; name=" <> quote(name)
   case filename {
     None -> base
-    Some(fname) -> base <> filename_disposition_params(fname)
+    Some(filename) -> base <> "; filename=" <> quote(filename)
   }
 }
 
@@ -31,8 +30,9 @@ pub fn has_header_breaking_bytes(value: String) -> Bool {
 }
 
 /// Internal: Decode an RFC 5987 / RFC 8187 `charset'language'value`
-/// parameter. Supports UTF-8 and ISO-8859-1, and fails when the value decodes
-/// to CR, LF or NUL.
+/// parameter. Supports UTF-8 and ISO-8859-1. Fails when the value holds a
+/// character that is neither an `attr-char` nor `%` with two hex digits, or
+/// decodes to CR, LF or NUL.
 pub fn decode_extended_value(input: String) -> Result(String, Nil) {
   use #(charset, after_first) <- result.try(string.split_once(input, on: "'"))
   use #(_language, encoded) <- result.try(string.split_once(after_first, "'"))
@@ -75,7 +75,11 @@ fn percent_decode(
       percent_decode(rest, <<acc:bits, byte>>)
     }
     ["%", ..] -> Error(Nil)
-    [other, ..rest] -> percent_decode(rest, <<acc:bits, other:utf8>>)
+    [other, ..rest] ->
+      case is_attr_char(other) {
+        True -> percent_decode(rest, <<acc:bits, other:utf8>>)
+        False -> Error(Nil)
+      }
   }
 }
 
@@ -94,75 +98,17 @@ fn hex_digit(grapheme: String) -> Result(Int, Nil) {
   int.base_parse(grapheme, 16)
 }
 
-fn filename_disposition_params(filename: String) -> String {
-  case is_ascii_safe(bit_array.from_string(filename)) {
-    True -> "; filename=" <> quote(filename)
-    False ->
-      "; filename="
-      <> quote(ascii_fallback(string.to_graphemes(filename), ""))
-      <> "; filename*=UTF-8''"
-      <> percent_encode(bit_array.from_string(filename), "")
-  }
-}
-
-fn is_ascii_safe(bytes: BitArray) -> Bool {
-  case bytes {
-    <<>> -> True
-    <<b, rest:bytes>> ->
-      case b == 0x09 || { b >= 0x20 && b <= 0x7E } {
-        True -> is_ascii_safe(rest)
-        False -> False
-      }
+/// RFC 5987 §3.2.1 attr-char: ALPHA / DIGIT / "!" / "#" / "$" / "&" / "+" /
+/// "-" / "." / "^" / "_" / "`" / "|" / "~".
+fn is_attr_char(grapheme: String) -> Bool {
+  case bit_array.from_string(grapheme) {
+    <<b>> ->
+      { b >= 0x41 && b <= 0x5A }
+      || { b >= 0x61 && b <= 0x7A }
+      || { b >= 0x30 && b <= 0x39 }
+      || string.contains("!#$&+-.^_`|~", grapheme)
     _ -> False
   }
-}
-
-fn ascii_fallback(remaining: List(String), acc: String) -> String {
-  case remaining {
-    [] -> acc
-    [grapheme, ..rest] ->
-      case is_ascii_safe(bit_array.from_string(grapheme)) {
-        True -> ascii_fallback(rest, acc <> grapheme)
-        False -> ascii_fallback(rest, acc <> "_")
-      }
-  }
-}
-
-fn percent_encode(bytes: BitArray, acc: String) -> String {
-  case bytes {
-    <<b, rest:bytes>> -> {
-      let chunk = case is_attr_char(b) {
-        True -> result.unwrap(bit_array.to_string(<<b>>), "")
-        False -> percent_byte(b)
-      }
-      percent_encode(rest, acc <> chunk)
-    }
-    _ -> acc
-  }
-}
-
-fn is_attr_char(b: Int) -> Bool {
-  // ALPHA / DIGIT
-  { b >= 0x41 && b <= 0x5A }
-  || { b >= 0x61 && b <= 0x7A }
-  || { b >= 0x30 && b <= 0x39 }
-  // ! # $ & + - . ^ _ ` | ~
-  || b == 0x21
-  || b == 0x23
-  || b == 0x24
-  || b == 0x26
-  || b == 0x2B
-  || b == 0x2D
-  || b == 0x2E
-  || b == 0x5E
-  || b == 0x5F
-  || b == 0x60
-  || b == 0x7C
-  || b == 0x7E
-}
-
-fn percent_byte(b: Int) -> String {
-  "%" <> string.pad_start(int.to_base16(b), to: 2, with: "0")
 }
 
 fn quote(value: String) -> String {

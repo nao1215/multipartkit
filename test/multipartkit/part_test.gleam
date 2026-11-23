@@ -37,8 +37,12 @@ pub fn headers_keep_order_and_case_test() {
 pub fn header_lookup_uses_ascii_only_case_folding_test() {
   // Unicode lowercasing folds `İ` towards `i`; header names must not.
   let assert Ok(p) =
-    multipartkit.new_part(headers: [#("X-Custom-İ", "value")], body: <<>>)
-  multipartkit.header(p, "x-custom-i") |> should.equal(Error(Nil))
+    multipartkit.new_part(headers: [#("x-custom-i", "value")], body: <<>>)
+  multipartkit.header(p, "X-Custom-İ") |> should.equal(Error(Nil))
+  multipartkit.header(p, "X-CUSTOM-I") |> should.equal(Ok("value"))
+  // A header name is printable ASCII, so `İ` cannot be in one.
+  multipartkit.new_part(headers: [#("X-Custom-İ", "value")], body: <<>>)
+  |> should.equal(Error(InvalidHeaderName("X-Custom-İ")))
 }
 
 pub fn new_part_rejects_header_breaking_values_test() {
