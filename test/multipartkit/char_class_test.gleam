@@ -7,7 +7,7 @@ import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
 import gleeunit/should
-import multipartkit/content_disposition
+import multipartkit
 import multipartkit/internal/disposition
 
 fn ascii() -> List(Int) {
@@ -50,8 +50,8 @@ pub fn filename_star_encodes_exactly_the_non_attr_chars_test() {
 }
 
 pub fn plain_filename_is_used_only_for_printable_ascii_and_tab_test() {
-  // Bytes outside HTAB / SP..~ (except the CR, LF and NUL that form
-  // building strips) need the `filename*` form.
+  // Bytes outside HTAB / SP..~ (except CR, LF and NUL, which new_file
+  // rejects) need the `filename*` form.
   ascii()
   |> list.filter(fn(code) { code != 0x00 && code != 0x0A && code != 0x0D })
   |> list.each(fn(code) {
@@ -67,9 +67,9 @@ pub fn quoted_pair_accepts_exactly_htab_sp_vchar_and_obs_text_test() {
   |> list.each(fn(code) {
     let value = "form-data; name=\"a\\" <> char(code) <> "b\""
     let valid = code == 0x09 || { code >= 0x20 && code != 0x7F }
-    case content_disposition.parse(value), valid {
+    case multipartkit.parse_content_disposition(value), valid {
       Ok(parsed), True ->
-        content_disposition.name(parsed)
+        parsed.name
         |> should.equal(Some("a" <> char(code) <> "b"))
       Error(_), False -> Nil
       _, _ -> should.equal(#(code, valid), #(code, !valid))
@@ -84,12 +84,12 @@ pub fn plain_filename_round_trips_every_printable_ascii_char_test() {
   |> list.each(fn(code) {
     let filename = "x" <> char(code) <> "y"
     let header = disposition.build_form_data_value("f", Some(filename))
-    let assert Ok(parsed) = content_disposition.parse(header)
-    content_disposition.filename(parsed) |> should.equal(Some(filename))
-    content_disposition.name(parsed) |> should.equal(Some("f"))
+    let assert Ok(parsed) = multipartkit.parse_content_disposition(header)
+    parsed.filename |> should.equal(Some(filename))
+    parsed.name |> should.equal(Some("f"))
   })
   disposition.build_form_data_value("f", None)
-  |> content_disposition.parse
+  |> multipartkit.parse_content_disposition
   |> should.be_ok
 }
 

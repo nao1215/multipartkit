@@ -1,4 +1,4 @@
-//// Regression tests for Issue #50: `multipartkit/content_disposition.parse`
+//// Regression tests for Issue #50: `multipartkit.parse_content_disposition`
 //// quoted-pair handling must align with RFC 7230 §3.2.6
 ////
 ////   quoted-pair = "\" ( HTAB / SP / VCHAR / obs-text )
@@ -11,44 +11,49 @@
 
 import gleam/option.{Some}
 import gleeunit/should
-import multipartkit/content_disposition as cd
+import multipartkit
 
 // === RFC 7230 §3.2.6 strict compliance ===
 
 pub fn cd_canonical_escape_backslash_test() {
-  let assert Ok(p) = cd.parse("form-data; name=\"\\\\backslash\"")
-  cd.name(p) |> should.equal(Some("\\backslash"))
+  let assert Ok(p) =
+    multipartkit.parse_content_disposition("form-data; name=\"\\\\backslash\"")
+  p.name |> should.equal(Some("\\backslash"))
 }
 
 pub fn cd_canonical_escape_quote_test() {
-  let assert Ok(p) = cd.parse("form-data; name=\"\\\"quoted\\\"\"")
-  cd.name(p) |> should.equal(Some("\"quoted\""))
+  let assert Ok(p) =
+    multipartkit.parse_content_disposition("form-data; name=\"\\\"quoted\\\"\"")
+  p.name |> should.equal(Some("\"quoted\""))
 }
 
 pub fn cd_vchar_escape_drops_backslash_test() {
   // \X where X is VCHAR ('n' = U+006E ∈ [%x21-7E])
   // RFC 7230: \X 展開 = X (backslash drop)
-  let assert Ok(p) = cd.parse("form-data; name=\"\\nnewline\"")
-  cd.name(p) |> should.equal(Some("nnewline"))
+  let assert Ok(p) =
+    multipartkit.parse_content_disposition("form-data; name=\"\\nnewline\"")
+  p.name |> should.equal(Some("nnewline"))
 }
 
 pub fn cd_nul_in_quoted_pair_rejected_test() {
   // \X where X is NUL (U+0000): not VCHAR, not obs-text → invalid quoted-pair
-  case cd.parse("form-data; name=\"\\\u{0000}nul\"") {
+  case
+    multipartkit.parse_content_disposition("form-data; name=\"\\\u{0000}nul\"")
+  {
     Error(_) -> Nil
     Ok(_) -> should.fail()
   }
 }
 
 pub fn cd_cr_in_quoted_pair_rejected_test() {
-  case cd.parse("form-data; name=\"\\\rcr\"") {
+  case multipartkit.parse_content_disposition("form-data; name=\"\\\rcr\"") {
     Error(_) -> Nil
     Ok(_) -> should.fail()
   }
 }
 
 pub fn cd_lf_in_quoted_pair_rejected_test() {
-  case cd.parse("form-data; name=\"\\\nlf\"") {
+  case multipartkit.parse_content_disposition("form-data; name=\"\\\nlf\"") {
     Error(_) -> Nil
     Ok(_) -> should.fail()
   }
@@ -57,11 +62,13 @@ pub fn cd_lf_in_quoted_pair_rejected_test() {
 // === Behavioural regression baseline ===
 
 pub fn cd_no_escape_test() {
-  let assert Ok(p) = cd.parse("form-data; name=\"plain\"")
-  cd.name(p) |> should.equal(Some("plain"))
+  let assert Ok(p) =
+    multipartkit.parse_content_disposition("form-data; name=\"plain\"")
+  p.name |> should.equal(Some("plain"))
 }
 
 pub fn cd_utf8_name_test() {
-  let assert Ok(p) = cd.parse("form-data; name=\"日本語\"")
-  cd.name(p) |> should.equal(Some("日本語"))
+  let assert Ok(p) =
+    multipartkit.parse_content_disposition("form-data; name=\"日本語\"")
+  p.name |> should.equal(Some("日本語"))
 }

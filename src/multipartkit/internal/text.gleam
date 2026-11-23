@@ -1,5 +1,5 @@
 //// Internal: shared text-grammar primitives used by the Content-Type and
-//// Content-Disposition parsers.
+//// Content-Disposition parsers and the boundary check.
 ////
 //// These helpers operate on `String` values (which are UTF-8 in Gleam) but
 //// only ever inspect ASCII bytes in this library. Non-ASCII content inside
@@ -62,7 +62,7 @@ fn is_alnum(grapheme: String) -> Bool {
 ///
 /// Returns `Error(Nil)` if the input does not start with `"`, or if the
 /// quoted-string is unterminated.
-pub fn read_quoted_string(input: String) -> Result(#(String, String), Nil) {
+fn read_quoted_string(input: String) -> Result(#(String, String), Nil) {
   case string.pop_grapheme(input) {
     Ok(#("\"", rest)) -> read_quoted_loop(rest, "")
     _ -> Error(Nil)
@@ -254,4 +254,39 @@ fn fold_grapheme_ascii(grapheme: String) -> String {
 /// Internal: ASCII case-insensitive equality.
 pub fn equals_ci(a: String, b: String) -> Bool {
   ascii_lowercase(a) == ascii_lowercase(b)
+}
+
+/// Internal: Return the value of the first pair whose key equals `key`
+/// ASCII case-insensitively.
+pub fn find_ci(
+  pairs: List(#(String, String)),
+  key: String,
+) -> Result(String, Nil) {
+  case pairs {
+    [] -> Error(Nil)
+    [#(k, v), ..rest] ->
+      case equals_ci(k, key) {
+        True -> Ok(v)
+        False -> find_ci(rest, key)
+      }
+  }
+}
+
+/// Internal: Return `True` when `value` satisfies the RFC 2046 §5.1.1
+/// `boundary` grammar: 1 to 70 `bchars`, not ending in a space. The parser
+/// and both encoders use this, so they accept the same boundaries.
+pub fn is_valid_boundary(value: String) -> Bool {
+  let length = string.length(value)
+  length >= 1
+  && length <= 70
+  && !string.ends_with(value, " ")
+  && list.all(string.to_graphemes(value), is_bchar)
+}
+
+fn is_bchar(grapheme: String) -> Bool {
+  case grapheme {
+    "'" | "(" | ")" | "+" | "_" | "," | "-" | "." -> True
+    "/" | ":" | "=" | "?" | " " -> True
+    other -> is_alnum(other)
+  }
 }

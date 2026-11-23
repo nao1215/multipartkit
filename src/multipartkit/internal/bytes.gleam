@@ -11,8 +11,8 @@ import gleam/result
 /// at byte offset `from`, scanning byte-by-byte. Returns the offset of the
 /// first match, or `Error(Nil)` if no match exists.
 ///
-/// This is an O(n*m) naive scan. The patterns we use (boundary tokens up to
-/// 70 bytes per RFC 2046) make this acceptable for v0.1.0.
+/// This is an O(n*m) naive scan. Boundary tokens are at most 70 bytes
+/// (RFC 2046), which keeps it cheap.
 pub fn find_index(
   haystack: BitArray,
   needle: BitArray,
@@ -128,26 +128,5 @@ fn next_line_offset(buf: BitArray, from: Int, total: Int) -> Result(Int, Nil) {
             _ -> next_line_offset(buf, from + 1, total)
           }
       }
-  }
-}
-
-/// Internal: Return `True` when two ASCII byte sequences are equal modulo
-/// case (A-Z mapped to a-z). Non-ASCII bytes compare for exact equality.
-pub fn equals_ascii_ci(a: BitArray, b: BitArray) -> Bool {
-  case a, b {
-    <<>>, <<>> -> True
-    <<x, ax:bytes>>, <<y, by:bytes>> ->
-      case fold_ascii(x) == fold_ascii(y) {
-        True -> equals_ascii_ci(ax, by)
-        False -> False
-      }
-    _, _ -> False
-  }
-}
-
-fn fold_ascii(byte: Int) -> Int {
-  case byte >= 0x41 && byte <= 0x5A {
-    True -> byte + 32
-    False -> byte
   }
 }

@@ -1,25 +1,18 @@
-//// Demonstrate `parse_stream` consuming a `Yielder(BitArray)` lazily.
+//// Parse a multipart body that arrives as a `Yielder(BitArray)` of chunks.
 ////
 ////    cd examples/streaming_parse
 ////    gleam run
 ////
-//// The input chunks yielder is consumed lazily and both
-//// `max_body_bytes` and `max_part_bytes` are enforced incrementally —
-//// an oversized stream or an oversized single part is rejected at the
-//// chunk that crosses the limit, before the rest of the input is
-//// buffered. Each `StreamPart.body` yielder emits the part body in
-//// fixed-size chunks (up to ~64 KiB each) so consumers can fold over
-//// large bodies without first materialising them as one
-//// application-level `BitArray`.
+//// `stream.parse` pulls chunks only when it needs them, so a body over
+//// `max_body_bytes` fails at the chunk that crosses the limit. Each part
+//// body comes out in chunks of up to 64 KiB.
 
 import gleam/bit_array
 import gleam/int
 import gleam/io
 import gleam/option.{None, Some}
 import gleam/yielder
-import multipartkit
-import multipartkit/error.{type MultipartError, BodyTooLarge}
-import multipartkit/limit
+import multipartkit.{type MultipartError, BodyTooLarge}
 import multipartkit/stream
 
 pub fn main() {
@@ -29,10 +22,10 @@ pub fn main() {
     Error(_) -> io.println("(unexpected error)")
   }
 
-  io.println("\n# Oversized stream — rejected before all chunks are pulled")
+  io.println("\n# Oversized stream, rejected before all chunks are pulled")
   run_oversized()
 
-  io.println("\n# Large part — body yielder emits multiple chunks")
+  io.println("\n# Large part, body comes out in several chunks")
   run_chunked_body()
 }
 
@@ -48,13 +41,19 @@ fn run_happy() -> Result(Nil, MultipartError) {
       <<"\r\n--B--\r\n":utf8>>,
     ])
 
-  case multipartkit.parse_stream(chunks, "multipart/form-data; boundary=B") {
+  case
+    stream.parse(
+      chunks,
+      "multipart/form-data; boundary=B",
+      multipartkit.default_limits,
+    )
+  {
     Error(err) -> Error(err)
     Ok(parts_yielder) -> {
       yielder.each(parts_yielder, fn(item) {
         case item {
           Ok(stream_part) -> describe_part(stream_part)
-          Error(_) -> io.println("error item — iterator is now exhausted")
+          Error(_) -> io.println("error item, the yielder ends here")
         }
       })
       Ok(Nil)
@@ -68,7 +67,7 @@ fn describe_part(stream_part: stream.StreamPart) -> Nil {
     None -> "(no name)"
   }
   case stream.drain_body(stream.body(stream_part)) {
-    Ok(body) -> io.println("- " <> label <> " — " <> describe_body(body))
+    Ok(body) -> io.println("- " <> label <> ": " <> describe_body(body))
     Error(_) -> io.println("- " <> label <> " (body errored)")
   }
 }
@@ -86,19 +85,10 @@ fn run_oversized() -> Nil {
     "--B\r\nContent-Disposition: form-data; name=\"big\"\r\n\r\nAAAAAAAAAAAAAAAAAAAA":utf8,
   >>
   let chunks = yielder.from_list([big_first_chunk, <<"\r\n--B--\r\n":utf8>>])
-  let assert Ok(limits) =
-    limit.new(
-      max_body_bytes: 30,
-      max_part_bytes: 1000,
-      max_parts: 100,
-      max_header_bytes: 1000,
-    )
+  let limits =
+    multipartkit.Limits(..multipartkit.default_limits, max_body_bytes: 30)
   let assert Ok(parts_yielder) =
-    multipartkit.parse_stream_with_limits(
-      chunks,
-      "multipart/form-data; boundary=B",
-      limits,
-    )
+    stream.parse(chunks, "multipart/form-data; boundary=B", limits)
   case yielder.step(parts_yielder) {
     yielder.Next(Error(BodyTooLarge(limit_value)), _) ->
       io.println(
@@ -111,9 +101,7 @@ fn run_oversized() -> Nil {
 }
 
 fn run_chunked_body() -> Nil {
-  // Build a single part whose body is large enough that the body yielder
-  // surfaces it as several Ok(BitArray) items rather than one. We assemble
-  // the body as ASCII `A` repeated 200_000 times.
+  // A 200,000-byte body is larger than one 64 KiB chunk.
   let big_body = repeat_byte(0x41, 200_000)
   let prefix = <<
     "--B\r\nContent-Disposition: form-data; name=\"big\"\r\n\r\n":utf8,
@@ -124,18 +112,11 @@ fn run_chunked_body() -> Nil {
     |> bit_array.append(big_body)
     |> bit_array.append(suffix)
   let chunks = yielder.from_list([body])
-  let assert Ok(limits) =
-    limit.new(
-      max_body_bytes: 1_000_000,
-      max_part_bytes: 1_000_000,
-      max_parts: 100,
-      max_header_bytes: 1000,
-    )
   let assert Ok(parts_yielder) =
-    multipartkit.parse_stream_with_limits(
+    stream.parse(
       chunks,
       "multipart/form-data; boundary=B",
-      limits,
+      multipartkit.default_limits,
     )
   case yielder.step(parts_yielder) {
     yielder.Next(Ok(stream_part), _) -> {

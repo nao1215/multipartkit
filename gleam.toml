@@ -1,6 +1,6 @@
 name = "multipartkit"
 version = "0.16.0"
-description = "Multipart body parsing and generation primitives for Gleam on Erlang and JavaScript targets"
+description = "Parse and build multipart bodies, such as multipart/form-data uploads, on Erlang and JavaScript"
 licences = ["MIT"]
 repository = { type = "github", user = "nao1215", repo = "multipartkit" }
 links = [
@@ -12,7 +12,7 @@ gleam = ">= 1.14.0"
 [dependencies]
 gleam_stdlib = ">= 0.44.0 and < 2.0.0"
 gleam_yielder = ">= 1.0.0 and < 2.0.0"
-mimetype = ">= 0.24.0 and < 1.0.0"
+mimetype = ">= 0.27.0 and < 1.0.0"
 
 [dev-dependencies]
 gleeunit = ">= 1.0.0 and < 2.0.0"
@@ -35,9 +35,5 @@ unused_exports = "off"
   "short_variable_name",
   "thrown_away_error",
 ]
-"src/multipartkit/parser.gleam" = ["deep_nesting", "prefer_guard_clause"]
-"src/multipartkit/stream.gleam" = ["deep_nesting", "prefer_guard_clause"]
 "src/multipartkit/internal/scan.gleam" = ["deep_nesting", "prefer_guard_clause"]
 "src/multipartkit/internal/bytes.gleam" = ["prefer_guard_clause"]
-"src/multipartkit/internal/headers.gleam" = ["prefer_guard_clause"]
-"src/multipartkit/header.gleam" = ["deep_nesting"]

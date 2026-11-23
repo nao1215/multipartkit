@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+The public API is smaller: the 13 public modules become `multipartkit` and `multipartkit/stream`, and 71 public functions become 29. Code that used the old modules needs updating.
+
+- `multipartkit/error`, `part`, `parser`, `encoder`, `form`, `query`, `validate`, `content_disposition`, `header`, `limit` and `infer` are removed. Their types and functions move to `multipartkit`, and the re-export aliases in `multipartkit` are gone.
+- `parse` and `stream.parse` take the limits as a third argument. `parse_with_limits`, `parse_stream` and `parse_stream_with_limits` are removed. `stream.encode` replaces `encode_stream`.
+- `Limits` is a plain record and `default_limits` is a constant: write `Limits(..multipartkit.default_limits, max_parts: 10)`. `limit.new`, `new_limits`, `LimitConfigError` and the `max_*` getters are removed. Values below 1 are no longer rejected.
+- `encode` takes the parts first: `encode(parts, boundary)`. `encode_form` takes a `List(Part)`.
+- The `Form` builder is removed. `new_field(name:, value:)` and `new_file(name:, filename:, content_type:, body:)` return `Result(Part, MultipartError)` and behave like the old `add_field_strict` and `add_file_strict`. The lenient `add_field` and `add_file`, which removed CR, LF and NUL and renamed empty names to `_unnamed_<n>`, are removed, as are `unsafe_add_part` and `FormError`. An empty or whitespace-only name is `EmptyFieldName(name)`, and CR, LF or NUL in a name, filename or content type is `InvalidHeaderValue(header, value)`.
+- `part.new(headers:, name:, filename:, content_type:, body:)` becomes `new_part(headers:, body:)`. `name`, `filename` and `content_type` are always read from the headers, as for a parsed part, so the old header synthesis from those arguments is removed, and an unparseable `Content-Disposition` or an empty header name is rejected. Built and parsed parts compare equal with `==`, so `equal_on_wire` and `list_equal_on_wire` are removed.
+- `header` returns `Result(String, Nil)` instead of `Option(String)`. `part.headers(part, name)` is removed, and `all_headers` is renamed `headers` (also in `multipartkit/stream`).
+- `field` and `file` return `Result` with the behaviour of the old `required_field` and `required_file`, which are removed.
+- `validate.has_field` and `validate.max_file_size` are removed. `allowed_content_types` moves to `multipartkit`.
+- `content_disposition.parse` becomes `parse_content_disposition` and returns a `ContentDisposition` record with `disposition`, `name`, `filename` and `parameters` fields instead of getters.
+- The `infer` module and `add_file_auto` / `add_file_auto_with` are replaced by `infer_content_type(filename, body)`, which tries the extension, then the leading bytes, then returns `application/octet-stream`.
+- `header.boundary` and `header.validate_boundary`, `stream.from_datastream` and `stream.to_datastream`, and the `UnsupportedFeature` error variant, which nothing returned, are removed.
+- `mimetype` 0.27.0 or later is required.
+
+Before:
+
+```gleam
+let form =
+  form.new()
+  |> form.add_field("title", "hello")
+  |> form.add_file("avatar", "cat.png", "image/png", png)
+let #(content_type, body) = multipartkit.encode_form(form)
+let assert Ok(parts) = multipartkit.parse(body, content_type)
+let assert Ok(title) = query.required_field(parts, "title")
+let assert Some(avatar) = query.file(parts, "avatar")
+let filename = part.filename(avatar)
+```
+
+After:
+
+```gleam
+let assert Ok(title) = multipartkit.new_field(name: "title", value: "hello")
+let assert Ok(avatar) =
+  multipartkit.new_file(
+    name: "avatar",
+    filename: "cat.png",
+    content_type: "image/png",
+    body: png,
+  )
+let #(content_type, body) = multipartkit.encode_form([title, avatar])
+let assert Ok(parts) =
+  multipartkit.parse(body, content_type, multipartkit.default_limits)
+let assert Ok(title) = multipartkit.field(parts, "title")
+let assert Ok(avatar) = multipartkit.file(parts, "avatar")
+let filename = multipartkit.filename(avatar)
+```
+
+### Fixed
+
+- `parse` and `stream.parse` return `InvalidQuotedPair` for a `Content-Disposition` that escapes a control character, as documented. Before, they returned `InvalidContentDisposition`.
+- A `filename*` or `name*` parameter that decodes to CR, LF or NUL is rejected with `InvalidContentDisposition`, as the quoted form already was.
+- A `"` or `\` followed by a combining mark in a name or filename is escaped. Before, it went out unescaped and could end the quoted string early for a receiver that reads bytes.
+- `new_part` rejects a header name that starts with a space or tab, which `parse` would read as a folded line.
+- A header block with no blank line after it fails with `HeaderTooLarge` once it is over `max_header_bytes`. Before, `stream.parse` kept buffering up to `max_body_bytes`.
+- `stream.parse` counts the epilogue of a body with no parts against `max_body_bytes`, as `parse` does.
+
 ## [0.16.0] - 2026-11-19
 
 ### Fixed

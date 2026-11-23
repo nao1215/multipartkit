@@ -22,13 +22,10 @@
 
 import gleam/bit_array
 import gleam/list
-import gleam/option.{None, Some}
+import gleam/option.{Some}
 import gleam/yielder
 import gleeunit/should
-import multipartkit/encoder
-import multipartkit/error.{InvalidContentDisposition, UnexpectedEndOfInput}
-import multipartkit/parser
-import multipartkit/part
+import multipartkit.{InvalidContentDisposition, UnexpectedEndOfInput}
 import multipartkit/stream
 
 // ---------------------------------------------------------------------------
@@ -56,15 +53,12 @@ const fixture_form_data_body: BitArray = <<
 
 pub fn encoder_emits_canonical_form_data_body_test() {
   let assert Ok(title) =
-    part.new(
+    multipartkit.new_part(
       headers: [#("Content-Disposition", "form-data; name=\"title\"")],
-      name: Some("title"),
-      filename: None,
-      content_type: None,
       body: <<"hi":utf8>>,
     )
   let assert Ok(avatar) =
-    part.new(
+    multipartkit.new_part(
       headers: [
         #(
           "Content-Disposition",
@@ -72,26 +66,27 @@ pub fn encoder_emits_canonical_form_data_body_test() {
         ),
         #("Content-Type", "text/plain"),
       ],
-      name: Some("avatar"),
-      filename: Some("a.bin"),
-      content_type: Some("text/plain"),
       body: <<0xDE, 0xAD, 0xBE, 0xEF>>,
     )
-  let assert Ok(body) = encoder.encode("B", [title, avatar])
+  let assert Ok(body) = multipartkit.encode([title, avatar], "B")
   body |> should.equal(fixture_form_data_body)
 }
 
 pub fn parser_round_trips_canonical_form_data_body_test() {
   let assert Ok(parts) =
-    parser.parse(fixture_form_data_body, "multipart/form-data; boundary=B")
+    multipartkit.parse(
+      fixture_form_data_body,
+      "multipart/form-data; boundary=B",
+      multipartkit.default_limits,
+    )
   case parts {
     [title, avatar] -> {
-      part.name(title) |> should.equal(Some("title"))
-      part.body(title) |> should.equal(<<"hi":utf8>>)
-      part.name(avatar) |> should.equal(Some("avatar"))
-      part.filename(avatar) |> should.equal(Some("a.bin"))
-      part.content_type(avatar) |> should.equal(Some("text/plain"))
-      part.body(avatar) |> should.equal(<<0xDE, 0xAD, 0xBE, 0xEF>>)
+      multipartkit.name(title) |> should.equal(Some("title"))
+      multipartkit.body(title) |> should.equal(<<"hi":utf8>>)
+      multipartkit.name(avatar) |> should.equal(Some("avatar"))
+      multipartkit.filename(avatar) |> should.equal(Some("a.bin"))
+      multipartkit.content_type(avatar) |> should.equal(Some("text/plain"))
+      multipartkit.body(avatar) |> should.equal(<<0xDE, 0xAD, 0xBE, 0xEF>>)
     }
     _ -> should.fail()
   }
@@ -119,12 +114,16 @@ const fixture_rfc5987_form_data: BitArray = <<
 
 pub fn parser_prefers_filename_star_on_rfc5987_fixture_test() {
   let assert Ok([the_part]) =
-    parser.parse(fixture_rfc5987_form_data, "multipart/form-data; boundary=B")
+    multipartkit.parse(
+      fixture_rfc5987_form_data,
+      "multipart/form-data; boundary=B",
+      multipartkit.default_limits,
+    )
   // Decoded filename comes from `filename*=UTF-8''%E5%86%99%E7%9C%9F.png`,
   // not from `filename="__.png"`.
-  part.filename(the_part) |> should.equal(Some("写真.png"))
-  part.content_type(the_part) |> should.equal(Some("image/png"))
-  part.body(the_part) |> should.equal(<<"PNG":utf8>>)
+  multipartkit.filename(the_part) |> should.equal(Some("写真.png"))
+  multipartkit.content_type(the_part) |> should.equal(Some("image/png"))
+  multipartkit.body(the_part) |> should.equal(<<"PNG":utf8>>)
 }
 
 // ---------------------------------------------------------------------------
@@ -144,15 +143,25 @@ pub fn parser_prefers_filename_star_on_rfc5987_fixture_test() {
 // ---------------------------------------------------------------------------
 
 fn drained_parts(
-  source: yielder.Yielder(Result(stream.StreamPart, error.MultipartError)),
-) -> Result(List(#(option.Option(String), BitArray)), error.MultipartError) {
+  source: yielder.Yielder(
+    Result(stream.StreamPart, multipartkit.MultipartError),
+  ),
+) -> Result(
+  List(#(option.Option(String), BitArray)),
+  multipartkit.MultipartError,
+) {
   drained_parts_loop(source, [])
 }
 
 fn drained_parts_loop(
-  source: yielder.Yielder(Result(stream.StreamPart, error.MultipartError)),
+  source: yielder.Yielder(
+    Result(stream.StreamPart, multipartkit.MultipartError),
+  ),
   acc: List(#(option.Option(String), BitArray)),
-) -> Result(List(#(option.Option(String), BitArray)), error.MultipartError) {
+) -> Result(
+  List(#(option.Option(String), BitArray)),
+  multipartkit.MultipartError,
+) {
   case yielder.step(source) {
     yielder.Done -> Ok(list.reverse(acc))
     yielder.Next(Error(err), _) -> Error(err)
@@ -204,11 +213,15 @@ fn split_at(input: BitArray, offset: Int) -> List(BitArray) {
 
 fn parse_chunks_to_pairs(
   chunks: List(BitArray),
-) -> Result(List(#(option.Option(String), BitArray)), error.MultipartError) {
+) -> Result(
+  List(#(option.Option(String), BitArray)),
+  multipartkit.MultipartError,
+) {
   let assert Ok(stream_yielder) =
-    stream.parse_stream(
+    stream.parse(
       yielder.from_list(chunks),
       "multipart/form-data; boundary=B",
+      multipartkit.default_limits,
     )
   drained_parts(stream_yielder)
 }
@@ -270,7 +283,11 @@ const fixture_truncated_body: BitArray = <<
 >>
 
 pub fn parser_truncated_body_returns_unexpected_end_of_input_test() {
-  parser.parse(fixture_truncated_body, "multipart/form-data; boundary=B")
+  multipartkit.parse(
+    fixture_truncated_body,
+    "multipart/form-data; boundary=B",
+    multipartkit.default_limits,
+  )
   |> should.equal(Error(UnexpectedEndOfInput))
 }
 
@@ -281,9 +298,10 @@ const fixture_malformed_disposition: BitArray = <<
 
 pub fn parser_malformed_disposition_returns_invalid_content_disposition_test() {
   case
-    parser.parse(
+    multipartkit.parse(
       fixture_malformed_disposition,
       "multipart/form-data; boundary=B",
+      multipartkit.default_limits,
     )
   {
     Error(InvalidContentDisposition(_)) -> Nil
