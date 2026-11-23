@@ -235,7 +235,13 @@ fn step_find_first(
   state: State,
 ) -> yielder.Step(Result(StreamPart, MultipartError), State) {
   case scan.find_delimiter(state.buffer, state.pattern, 0) {
-    scan.Found(_, scan.Closing, _) -> yielder.Done
+    // A body with no parts. The epilogue still counts against
+    // max_body_bytes, as in parse_body.
+    scan.Found(_, scan.Closing, _) ->
+      case drain_epilogue(state.chunks, state.bytes_pulled, state.limits) {
+        Ok(Nil) -> yielder.Done
+        Error(error) -> halt_with(state, error)
+      }
     scan.Found(_, scan.Delimiter, after_first) ->
       step_produce_next(State(..state, started: True, cursor: after_first))
     scan.Incomplete -> pull_then(state, step_find_first)
@@ -293,7 +299,19 @@ fn pull_chunk(state: State) -> PullOutcome {
 
 fn parse_one_part(state: State) -> PartOutcome {
   case bytes.find_blank_line(state.buffer, state.cursor) {
-    Error(Nil) -> NeedMore
+    // Without a blank line yet, fail once the buffered headers are already
+    // over the limit instead of pulling the whole body.
+    Error(Nil) ->
+      case
+        multipartkit.unterminated_headers(
+          state.buffer,
+          state.cursor,
+          state.limits,
+        )
+      {
+        HeaderTooLarge(_) as error -> Failed(error)
+        _ -> NeedMore
+      }
     Ok(#(blank_at, body_start)) -> {
       let limit = state.limits.max_header_bytes
       use <- bool.guard(

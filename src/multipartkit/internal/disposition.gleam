@@ -31,15 +31,21 @@ pub fn has_header_breaking_bytes(value: String) -> Bool {
 }
 
 /// Internal: Decode an RFC 5987 / RFC 8187 `charset'language'value`
-/// parameter. Supports UTF-8 and ISO-8859-1.
+/// parameter. Supports UTF-8 and ISO-8859-1, and fails when the value decodes
+/// to CR, LF or NUL.
 pub fn decode_extended_value(input: String) -> Result(String, Nil) {
   use #(charset, after_first) <- result.try(string.split_once(input, on: "'"))
   use #(_language, encoded) <- result.try(string.split_once(after_first, "'"))
   use bytes <- result.try(percent_decode(string.to_graphemes(encoded), <<>>))
-  case text.ascii_lowercase(charset) {
+  use decoded <- result.try(case text.ascii_lowercase(charset) {
     "utf-8" -> bit_array.to_string(bytes)
     "iso-8859-1" -> Ok(latin1_to_utf8(bytes, ""))
     _ -> Error(Nil)
+  })
+  // The quoted form cannot carry these bytes either (#50).
+  case has_header_breaking_bytes(decoded) {
+    True -> Error(Nil)
+    False -> Ok(decoded)
   }
 }
 
@@ -160,14 +166,18 @@ fn percent_byte(b: Int) -> String {
 }
 
 fn quote(value: String) -> String {
-  "\"" <> escape_quoted(value, "") <> "\""
+  let escaped = escape_quoted(bit_array.from_string(value), <<>>)
+  // Only ASCII bytes were inserted, so the result is still UTF-8.
+  "\"" <> result.unwrap(bit_array.to_string(escaped), "") <> "\""
 }
 
-fn escape_quoted(remaining: String, acc: String) -> String {
-  case string.pop_grapheme(remaining) {
-    Error(Nil) -> acc
-    Ok(#("\\", rest)) -> escape_quoted(rest, acc <> "\\\\")
-    Ok(#("\"", rest)) -> escape_quoted(rest, acc <> "\\\"")
-    Ok(#(other, rest)) -> escape_quoted(rest, acc <> other)
+fn escape_quoted(remaining: BitArray, acc: BitArray) -> BitArray {
+  // Work on bytes: a quote followed by a combining mark is one grapheme, and
+  // would not be escaped if this compared graphemes.
+  case remaining {
+    <<"\\":utf8, rest:bytes>> -> escape_quoted(rest, <<acc:bits, "\\\\":utf8>>)
+    <<"\"":utf8, rest:bytes>> -> escape_quoted(rest, <<acc:bits, "\\\"":utf8>>)
+    <<byte, rest:bytes>> -> escape_quoted(rest, <<acc:bits, byte>>)
+    _ -> acc
   }
 }

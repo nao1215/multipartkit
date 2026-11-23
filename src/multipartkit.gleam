@@ -50,8 +50,8 @@ pub type MultipartError {
   TooManyParts(limit: Int)
   /// A part's header block is larger than `Limits.max_header_bytes`.
   HeaderTooLarge(limit: Int)
-  /// A header name given to `new_part` is empty or contains CR, LF, NUL or
-  /// `:`.
+  /// A header name given to `new_part` is empty, starts with a space or tab,
+  /// or contains CR, LF, NUL or `:`.
   InvalidHeaderName(name: String)
   /// A header value given to `new_part`, or a name, filename or content type
   /// given to `new_field` or `new_file`, contains CR, LF or NUL.
@@ -138,9 +138,9 @@ pub type ContentDisposition {
 
 /// Creates a text field part for a `multipart/form-data` body.
 ///
-/// Returns `Error(EmptyFieldName(name))` when the name is empty or only
-/// whitespace, and `Error(InvalidHeaderValue(..))` when it contains CR, LF or
-/// NUL.
+/// Returns `Error(InvalidHeaderValue(..))` when the name contains CR, LF or
+/// NUL, and otherwise `Error(EmptyFieldName(name))` when it is empty or only
+/// whitespace.
 ///
 /// ## Examples
 ///
@@ -204,10 +204,6 @@ fn new_form_data_part(
   other_headers: List(#(String, String)),
   body: BitArray,
 ) -> Result(Part, MultipartError) {
-  use <- bool.guard(
-    when: string.trim(name) == "",
-    return: Error(EmptyFieldName(name)),
-  )
   // A filename that is not ASCII goes out percent-encoded, so new_part would
   // not see a CR, LF or NUL in it. Check both values here.
   use _ <- result.try(
@@ -217,6 +213,10 @@ fn new_form_data_part(
         False -> Ok(Nil)
       }
     }),
+  )
+  use <- bool.guard(
+    when: string.trim(name) == "",
+    return: Error(EmptyFieldName(name)),
   )
   let content_disposition = disposition.build_form_data_value(name, filename)
   new_part(
@@ -231,10 +231,12 @@ fn new_form_data_part(
 /// `name`, `filename` and `content_type` are read from the headers in the
 /// same way as for a parsed part.
 ///
-/// Returns `Error(InvalidHeaderName(name))` for an empty header name or one
-/// with CR, LF, NUL or `:`, `Error(InvalidHeaderValue(name, value))` for a
-/// value with CR, LF or NUL, and `Error(InvalidContentDisposition(value))`
-/// when the `Content-Disposition` header cannot be parsed.
+/// Returns `Error(InvalidHeaderName(name))` for a header name that is empty,
+/// starts with a space or tab, or contains CR, LF, NUL or `:`. Returns
+/// `Error(InvalidHeaderValue(name, value))` for a value with CR, LF or NUL,
+/// and `Error(InvalidContentDisposition(value))` or
+/// `Error(InvalidQuotedPair(value))` when the `Content-Disposition` header
+/// cannot be parsed.
 ///
 /// ## Examples
 ///
@@ -264,6 +266,8 @@ fn check_header(
   let #(name, value) = header
   use <- bool.guard(
     when: name == ""
+      || string.starts_with(name, " ")
+      || string.starts_with(name, "\t")
       || string.contains(name, ":")
       || disposition.has_header_breaking_bytes(name),
     return: Error(InvalidHeaderName(name)),
@@ -284,10 +288,7 @@ fn from_headers(
     Error(Nil) ->
       Ok(Part(headers:, name: None, filename: None, content_type:, body:))
     Ok(value) -> {
-      use parsed <- result.try(
-        parse_content_disposition(value)
-        |> result.replace_error(InvalidContentDisposition(value)),
-      )
+      use parsed <- result.try(parse_content_disposition(value))
       // Only form-data parts have a field name. An `attachment` part keeps
       // its headers, but `field` and `file` do not see it.
       case parsed.disposition {
@@ -457,7 +458,7 @@ fn parse_loop(
 ) -> Result(List(Part), MultipartError) {
   use #(blank_at, body_start) <- result.try(
     bytes.find_blank_line(body, cursor)
-    |> result.replace_error(UnexpectedEndOfInput),
+    |> result.replace_error(unterminated_headers(body, cursor, limits)),
   )
   use <- bool.guard(
     when: body_start - cursor > limits.max_header_bytes,
@@ -487,6 +488,21 @@ fn parse_loop(
       }
     }
   }
+}
+
+/// The error for a header block with no blank line after it. Shared with
+/// `multipartkit/stream`, so both parsers agree.
+@internal
+pub fn unterminated_headers(
+  buffer: BitArray,
+  cursor: Int,
+  limits: Limits,
+) -> MultipartError {
+  use <- bool.guard(
+    when: bit_array.byte_size(buffer) - cursor > limits.max_header_bytes,
+    return: HeaderTooLarge(limits.max_header_bytes),
+  )
+  UnexpectedEndOfInput
 }
 
 /// Reads the boundary from a Content-Type value. Shared with
@@ -594,7 +610,7 @@ pub fn parse_part_headers(block: BitArray) -> Result(Part, MultipartError) {
 /// Returns `Error(InvalidQuotedPair(value))` when a quoted string escapes a
 /// control character, and `Error(InvalidContentDisposition(value))` for any
 /// other malformed value, including a `filename*` that is not valid UTF-8 or
-/// ISO-8859-1.
+/// ISO-8859-1 or decodes to CR, LF or NUL.
 ///
 /// ## Examples
 ///

@@ -6,7 +6,7 @@ import gleeunit/should
 import multipartkit.{EmptyFieldName}
 
 pub fn new_field_rejects_blank_names_test() {
-  list.each(["", "   ", "\t\t", "\n", "\r\n"], fn(name) {
+  list.each(["", "   ", "\t\t"], fn(name) {
     multipartkit.new_field(name:, value: "value")
     |> should.equal(Error(EmptyFieldName(name)))
   })

@@ -58,6 +58,15 @@ let assert Ok(avatar) = multipartkit.file(parts, "avatar")
 let filename = multipartkit.filename(avatar)
 ```
 
+### Fixed
+
+- `parse` and `stream.parse` return `InvalidQuotedPair` for a `Content-Disposition` that escapes a control character, as documented. Before, they returned `InvalidContentDisposition`.
+- A `filename*` or `name*` parameter that decodes to CR, LF or NUL is rejected with `InvalidContentDisposition`, as the quoted form already was.
+- A `"` or `\` followed by a combining mark in a name or filename is escaped. Before, it went out unescaped and could end the quoted string early for a receiver that reads bytes.
+- `new_part` rejects a header name that starts with a space or tab, which `parse` would read as a folded line.
+- A header block with no blank line after it fails with `HeaderTooLarge` once it is over `max_header_bytes`. Before, `stream.parse` kept buffering up to `max_body_bytes`.
+- `stream.parse` counts the epilogue of a body with no parts against `max_body_bytes`, as `parse` does.
+
 ## [0.16.0] - 2026-11-19
 
 ### Fixed
