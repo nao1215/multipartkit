@@ -9,7 +9,6 @@ import gleam/list
 import gleam/yielder
 import metamon
 import metamon/generator.{type Generator}
-import metamon/generator/range
 import multipartkit.{type MultipartError}
 import multipartkit/stream
 import support
@@ -24,28 +23,33 @@ type Entry {
 fn tricky_bytes() -> Generator(BitArray) {
   generator.list_of(
     generator.frequency([
-      #(4, generator.bit_array(range.constant(0, 12))),
+      #(4, generator.bit_array(bytes: generator.range(from: 0, to: 12))),
       #(1, generator.return(<<"\r\n":utf8>>)),
       #(1, generator.return(<<"\r\n--":utf8>>)),
       #(1, generator.return(<<"--":utf8>>)),
       #(1, generator.return(<<"\r":utf8>>)),
       #(1, generator.return(<<"\n":utf8>>)),
     ]),
-    range.constant(0, 12),
+    length: generator.range(from: 0, to: 12),
   )
   |> generator.map(bit_array.concat)
 }
 
 fn name_gen() -> Generator(String) {
-  generator.string_alphanumeric(range.constant(1, 8))
-  |> generator.no_edges
+  generator.string(
+    of: generator.Alphanumeric,
+    length: generator.range(from: 1, to: 8),
+  )
 }
 
 fn entry_gen() -> Generator(Entry) {
   generator.one_of([
     generator.tuple2(
       name_gen(),
-      generator.string_printable_ascii(range.constant(0, 24)),
+      generator.string(
+        of: generator.PrintableAscii,
+        length: generator.range(from: 0, to: 24),
+      ),
     )
       |> generator.map(fn(p) { Field(p.0, p.1) }),
     generator.tuple3(
@@ -150,13 +154,16 @@ fn collect(
 }
 
 fn sizes_gen() -> Generator(List(Int)) {
-  generator.list_of(generator.int(range.constant(1, 40)), range.constant(1, 6))
+  generator.list_of(
+    generator.int(generator.range(from: 1, to: 40)),
+    length: generator.range(from: 1, to: 6),
+  )
 }
 
 pub fn stream_matches_buffered_for_encoded_forms_test() -> Nil {
   metamon.forall(
     generator.tuple2(
-      generator.list_of(entry_gen(), range.constant(0, 4)),
+      generator.list_of(entry_gen(), length: generator.range(from: 0, to: 4)),
       sizes_gen(),
     ),
     fn(input) {
@@ -165,7 +172,7 @@ pub fn stream_matches_buffered_for_encoded_forms_test() -> Nil {
       let limits = multipartkit.default_limits
       let expected = buffered(body, content_type, limits)
       let assert Ok(_) = expected
-      streamed(chunk(body, sizes), content_type, limits) == expected
+      assert streamed(chunk(body, sizes), content_type, limits) == expected
     },
   )
 }
@@ -175,12 +182,12 @@ pub fn stream_matches_buffered_for_encoded_forms_test() -> Nil {
 pub fn stream_matches_buffered_for_damaged_messages_test() -> Nil {
   metamon.forall(
     generator.tuple3(
-      generator.list_of(entry_gen(), range.constant(1, 3)),
+      generator.list_of(entry_gen(), length: generator.range(from: 1, to: 3)),
       sizes_gen(),
       generator.tuple3(
-        generator.int(range.constant(0, 1000)),
-        generator.int(range.constant(0, 8)),
-        generator.byte(),
+        generator.int(generator.range(from: 0, to: 1000)),
+        generator.int(generator.range(from: 0, to: 8)),
+        generator.int(generator.range(from: 0, to: 255)),
       ),
     ),
     fn(input) {
@@ -199,8 +206,8 @@ pub fn stream_matches_buffered_for_damaged_messages_test() -> Nil {
         _ -> bit_array.append(head, tail)
       }
       let limits = multipartkit.default_limits
-      streamed(chunk(damaged, sizes), content_type, limits)
-      == buffered(damaged, content_type, limits)
+      assert streamed(chunk(damaged, sizes), content_type, limits)
+        == buffered(damaged, content_type, limits)
     },
   )
 }
@@ -211,11 +218,11 @@ pub fn stream_matches_buffered_for_damaged_messages_test() -> Nil {
 pub fn stream_matches_buffered_at_limit_boundaries_test() -> Nil {
   metamon.forall(
     generator.tuple3(
-      generator.list_of(entry_gen(), range.constant(1, 3)),
+      generator.list_of(entry_gen(), length: generator.range(from: 1, to: 3)),
       sizes_gen(),
       generator.tuple2(
         generator.element_of(["body", "part", "parts", "header"]),
-        generator.int(range.constant(-1, 1)),
+        generator.int(generator.range(from: -1, to: 1)),
       ),
     ),
     fn(input) {
@@ -252,8 +259,8 @@ pub fn stream_matches_buffered_at_limit_boundaries_test() -> Nil {
         _ -> Ok(multipartkit.Limits(b, p, n, at(header_size(seen))))
       }
       let assert Ok(limits) = limits
-      streamed(chunk(body, sizes), content_type, limits)
-      == buffered(body, content_type, limits)
+      assert streamed(chunk(body, sizes), content_type, limits)
+        == buffered(body, content_type, limits)
     },
   )
 }
