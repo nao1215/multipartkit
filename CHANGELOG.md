@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-23
+
 ### Changed
 
 Parsing and building follow RFC 2046 §5.1 and RFC 7578 more closely. Some input that was accepted before is now rejected, so code that builds parts from user input may need to handle more errors.

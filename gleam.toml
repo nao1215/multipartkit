@@ -1,5 +1,5 @@
 name = "multipartkit"
-version = "0.17.0"
+version = "0.18.0"
 description = "Parse and build multipart bodies, such as multipart/form-data uploads, on Erlang and JavaScript"
 licences = ["MIT"]
 repository = { type = "github", user = "nao1215", repo = "multipartkit" }
