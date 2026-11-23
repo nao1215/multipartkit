@@ -10,10 +10,10 @@ gleam run
 
 | Example | What it shows |
 |---|---|
-| `quick_start` | Build a `multipart/form-data` body, encode it, parse it back. The shortest "first success" path. |
-| `parse_request` | Parse a synthetic incoming HTTP request body, then validate it with `query.required_*` and the helpers in `multipartkit/validate`. |
-| `streaming_parse` | Feed input through `parse_stream` chunk-by-chunk and observe `max_body_bytes` being enforced incrementally. Includes a clear note about what "streaming" does and does not mean in v0.1.0. |
-| `mimetype_inference` | Wire [`nao1215/mimetype`](https://github.com/nao1215/mimetype) into the pluggable `Inferer` so `add_file_auto_with` can derive the right `Content-Type`. |
+| `quick_start` | Build a `multipart/form-data` body, encode it and parse it back. |
+| `parse_request` | Parse a request body with tighter limits and check the fields, the file and its content type. |
+| `streaming_parse` | Feed a body to `stream.parse` a chunk at a time and see `max_body_bytes` stop it at the chunk that crosses the limit. |
+| `mimetype_inference` | Pick each file's `Content-Type` with `infer_content_type`, from the file name or the first bytes. |
 
 The `justfile` in the repo root has `example-*` recipes that build and
 run each example with `--warnings-as-errors`, and a single `examples`

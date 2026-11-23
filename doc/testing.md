@@ -4,15 +4,15 @@
 
 ## Examples and unit tests
 
-`test/multipartkit/*_test.gleam` checks the parser, the streaming parser, the encoder, `Content-Disposition`, limits and queries one module at a time. `test/multipartkit/golden_fixtures_test.gleam` pins the exact bytes of representative messages, and each fixed bug keeps its reproduction in a `regression_*_test.gleam` file or next to the related tests. `just examples` builds and runs every program under `examples/`, and `just check-readme` keeps the README quick start equal to `examples/quick_start`.
+`test/multipartkit/*_test.gleam` checks the parser, the streaming parser, the encoder, the part builders, `Content-Disposition`, limits and queries, one area per file. `test/multipartkit/golden_fixtures_test.gleam` pins the exact bytes of representative messages, and each fixed bug keeps its reproduction in a `regression_*_test.gleam` file or next to the related tests. `test/readme_test.gleam` runs the second README example and the examples in the doc comments. `just examples` builds and runs every program under `examples/`, and `just check-readme` keeps the README quick start equal to `examples/quick_start`.
 
 ## Generated properties
 
-`test/multipartkit_metamon_test.gleam` uses metamon: an encoded form parses back to the same fields, files, filenames and content types, field order and duplicates survive, and CR / LF / NUL never reach the wire.
+`test/multipartkit_metamon_test.gleam` uses metamon: an encoded form parses back to the same fields, files, filenames and content types, field order and duplicates survive, and names or filenames with CR / LF / NUL are rejected.
 
 ## Differential testing
 
-`test/multipartkit/stream_differential_test.gleam` compares the buffered parser (`parse_with_limits`) with the streaming parser (`parse_stream_with_limits`), two implementations of the same grammar. For random forms whose file bodies are full of CR, LF, `--` and delimiter prefixes, cut into random chunk sizes, both must return the same parts. The same holds for damaged messages (a byte range dropped or a byte inserted), where both must fail with the same error, and with every limit set one below, at and one above what the message needs. This test found that the streaming parser ignored the epilogue for `max_body_bytes` when it arrived in a later chunk.
+`test/multipartkit/stream_differential_test.gleam` compares the buffered parser (`multipartkit.parse`) with the streaming parser (`stream.parse`), two implementations of the same grammar. For random forms whose file bodies are full of CR, LF, `--` and delimiter prefixes, cut into random chunk sizes, both must return the same parts. The same holds for damaged messages (a byte range dropped or a byte inserted), where both must fail with the same error, and with every limit set one below, at and one above what the message needs. This test found that the streaming parser ignored the epilogue for `max_body_bytes` when it arrived in a later chunk.
 
 ## Boundary tables
 
@@ -33,7 +33,7 @@ There is no mutation testing tool for Gleam, so `gleam_mutate.py` (from the muta
 
 The remaining survivors, grouped:
 
-- `internal/bytes` and `internal/scan` (26): loop bounds where `>=` and `>` take the same path because slicing past the end already fails, and the ASCII case folding of `equals_ascii_ci`, whose callers compare already lowercased names.
+- `internal/bytes` and `internal/scan` (26): loop bounds where `>=` and `>` take the same path because slicing past the end already fails, and the ASCII case folding of `equals_ascii_ci`, which has since been removed as unused.
 - `stream` (4): the header-block and part-size checks at exactly the limit, and the 64 KiB body chunking, which no test reaches with a part that large.
 - `internal/headers` (3): trailing whitespace trimming where a tab and a space are handled the same way downstream.
-- Single cases in `content_disposition`, `encoder` (boundary length), `header`, `part`, `text` and `validate`.
+- Single cases in the Content-Disposition parser, the boundary length check, the Content-Type parser, the part builder, `internal/text` and the content type check. These modules were merged into `multipartkit` after the run.

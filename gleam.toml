@@ -1,6 +1,6 @@
 name = "multipartkit"
 version = "0.16.0"
-description = "Multipart body parsing and generation primitives for Gleam on Erlang and JavaScript targets"
+description = "Parse and build multipart bodies, such as multipart/form-data uploads, on Erlang and JavaScript"
 licences = ["MIT"]
 repository = { type = "github", user = "nao1215", repo = "multipartkit" }
 links = [
