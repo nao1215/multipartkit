@@ -65,18 +65,20 @@ pub fn invalid_header_no_colon_test() {
     )
 }
 
-pub fn invalid_header_obs_fold_rejected_test() {
-  // RFC 7230 §3.2.4 forbids line-folding (continuation lines starting with
-  // SP/HT). We reject it as InvalidHeader.
+pub fn folded_header_is_joined_to_the_line_before_test() {
+  // RFC 5322 §2.2.3: a continuation line is unfolded, so this becomes
+  // `form-data; name="a" folded`, which is not a valid Content-Disposition.
   let body = <<
     "--B\r\nContent-Disposition: form-data; name=\"a\"\r\n folded\r\n\r\nx\r\n--B--\r\n":utf8,
   >>
-  let assert Error(InvalidHeader(_)) =
-    multipartkit.parse(
-      body,
-      "multipart/form-data; boundary=B",
-      multipartkit.default_limits,
-    )
+  multipartkit.parse(
+    body,
+    "multipart/form-data; boundary=B",
+    multipartkit.default_limits,
+  )
+  |> should.equal(
+    Error(InvalidContentDisposition("form-data; name=\"a\" folded")),
+  )
 }
 
 pub fn invalid_content_disposition_test() {

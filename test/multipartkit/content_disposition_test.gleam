@@ -71,18 +71,20 @@ pub fn parse_filename_star_takes_precedence_test() {
   parsed.filename |> should.equal(Some("star.txt"))
 }
 
-pub fn parse_filename_star_unsupported_charset_rejected_test() {
-  let assert Error(InvalidContentDisposition(_)) =
+pub fn parse_filename_star_unsupported_charset_is_ignored_test() {
+  let assert Ok(parsed) =
     multipartkit.parse_content_disposition(
-      "form-data; name=\"x\"; filename*=BIG5''something",
+      "form-data; name=\"x\"; filename=\"plain.txt\"; filename*=BIG5''something",
     )
+  parsed.filename |> should.equal(Some("plain.txt"))
 }
 
-pub fn parse_filename_star_invalid_pct_rejected_test() {
-  let assert Error(InvalidContentDisposition(_)) =
+pub fn parse_filename_star_invalid_pct_is_ignored_test() {
+  let assert Ok(parsed) =
     multipartkit.parse_content_disposition(
       "form-data; name=\"x\"; filename*=UTF-8''%ZZbad",
     )
+  parsed.filename |> should.equal(None)
 }
 
 pub fn parse_unparseable_returns_error_test() {
@@ -94,22 +96,17 @@ pub fn parse_unparseable_returns_error_test() {
 pub fn parse_preserves_param_order_test() {
   let assert Ok(parsed) =
     multipartkit.parse_content_disposition(
-      "form-data; alpha=1; beta=\"two\"; alpha=overridden",
+      "form-data; gamma=1; beta=\"two\"; alpha=3",
     )
   parsed.parameters
-  |> should.equal([
-    #("alpha", "1"),
-    #("beta", "two"),
-    #("alpha", "overridden"),
-  ])
+  |> should.equal([#("gamma", "1"), #("beta", "two"), #("alpha", "3")])
 }
 
-pub fn parse_first_occurrence_wins_for_convenience_test() {
-  let assert Ok(parsed) =
-    multipartkit.parse_content_disposition(
-      "form-data; name=\"first\"; name=\"second\"",
-    )
-  parsed.name |> should.equal(Some("first"))
+pub fn parse_rejects_a_repeated_parameter_test() {
+  // RFC 6266 §4.1: a repeated parameter makes the value invalid.
+  let value = "form-data; name=\"first\"; name=\"second\""
+  multipartkit.parse_content_disposition(value)
+  |> should.equal(Error(InvalidContentDisposition(value)))
 }
 
 pub fn parse_empty_disposition_token_rejected_test() {

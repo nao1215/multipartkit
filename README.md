@@ -86,7 +86,8 @@ The API reference is on [HexDocs](https://hexdocs.pm/multipartkit/).
 - `filename` returns what the client sent, which can be `../../etc/passwd` or an absolute path. Do not join it onto a server path; name stored files after a hash of their bytes or a generated id.
 - The Content-Type of a part is also what the client sent. Check the bytes with `infer_content_type` or [`mimetype.detect`](https://hexdocs.pm/mimetype/mimetype.html#detect) when it matters.
 - `new_field`, `new_file` and `new_part` reject CR, LF and NUL in names, filenames and header values, so a value from a user cannot add header lines.
-- Non-ASCII filenames are written in the RFC 5987 `filename*` form as well as a plain `filename` with `_` in place of the other characters. `parse` prefers `filename*`, and reads it in UTF-8 or ISO-8859-1.
+- `new_file` writes a non-ASCII filename as UTF-8 in the quoted `filename` parameter, as browsers do, because RFC 7578 forbids `filename*` in form data. `parse` still reads a `filename*` that another client sends, in UTF-8 or ISO-8859-1, and prefers it to `filename`, as Go and Python do. One it cannot decode is ignored.
+- `encode` returns `InvalidBoundary` when a line of a part starts with `--` and the boundary, which the receiver would take for a delimiter. `encode_form` draws a new boundary instead.
 
 How the package is tested is described in [doc/testing.md](https://github.com/nao1215/multipartkit/blob/main/doc/testing.md).
 

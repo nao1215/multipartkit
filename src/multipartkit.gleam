@@ -25,21 +25,26 @@ import multipartkit/internal/text.{QuotedPairInvalid, QuotedSyntax}
 pub type MultipartError {
   /// The Content-Type has no `boundary` parameter.
   MissingBoundary
-  /// The Content-Type is not a media type with parameters.
-  InvalidContentType(String)
+  /// The Content-Type is not a media type with parameters, or has a
+  /// parameter more than once.
+  InvalidContentType(content_type: String)
   /// The boundary is empty, longer than 70 characters, ends in a space or
-  /// contains a character RFC 2046 does not allow.
-  InvalidBoundary(String)
+  /// contains a character RFC 2046 does not allow, or a line of a part
+  /// given to `encode` or `stream.encode` starts with `--` and the boundary.
+  InvalidBoundary(boundary: String)
   /// The media type is not `multipart/*`.
-  UnsupportedMediaType(String)
-  /// A header line is folded, has no `:` or has an empty name. It holds the
-  /// line, or `""` when the header block is not UTF-8.
-  InvalidHeader(String)
-  /// A `Content-Disposition` value could not be parsed. It holds the value.
-  InvalidContentDisposition(String)
+  UnsupportedMediaType(media_type: String)
+  /// A header line has no `:`, has a name that is empty or holds a space,
+  /// tab or other character outside printable ASCII, holds CR or NUL, or is
+  /// a continuation line with no header before it. It holds the line, or
+  /// `""` when the header block is not UTF-8.
+  InvalidHeader(line: String)
+  /// A `Content-Disposition` value could not be parsed or has a parameter
+  /// more than once. It holds the value.
+  InvalidContentDisposition(value: String)
   /// A `Content-Disposition` quoted string escapes a control character, as in
   /// `\` followed by NUL. It holds the value.
-  InvalidQuotedPair(String)
+  InvalidQuotedPair(value: String)
   /// The body ended before the closing boundary.
   UnexpectedEndOfInput
   /// The body is larger than `Limits.max_body_bytes`.
@@ -50,8 +55,8 @@ pub type MultipartError {
   TooManyParts(limit: Int)
   /// A part's header block is larger than `Limits.max_header_bytes`.
   HeaderTooLarge(limit: Int)
-  /// A header name given to `new_part` is empty, starts with a space or tab,
-  /// or contains CR, LF, NUL or `:`.
+  /// A header name given to `new_part` is empty or holds `:`, a space, a
+  /// tab or another character outside printable ASCII.
   InvalidHeaderName(name: String)
   /// A header value given to `new_part`, or a name, filename or content type
   /// given to `new_field` or `new_file`, contains CR, LF or NUL.
@@ -67,7 +72,7 @@ pub type MultipartError {
   MissingFile(name: String)
   /// `allowed_content_types` rejected the part's Content-Type. It holds the
   /// Content-Type, or `""` when the part has none.
-  DisallowedContentType(String)
+  DisallowedContentType(content_type: String)
 }
 
 /// One part of a multipart body: its headers and its body bytes.
@@ -164,11 +169,11 @@ pub fn new_field(
 
 /// Creates a file part for a `multipart/form-data` body.
 ///
-/// A filename that is not printable ASCII is also written in RFC 5987
-/// `filename*` form, so it survives the round trip through `parse`. The
-/// errors are the same as `new_field`, and the filename and content type are
-/// checked for CR, LF and NUL too. `infer_content_type` can pick the content
-/// type.
+/// The filename is written as UTF-8 in the quoted `filename` parameter, as
+/// browsers do. RFC 7578 §4.2 forbids the RFC 5987 `filename*` form here.
+/// The errors are the same as `new_field`, and the filename and content
+/// type are checked for CR, LF and NUL too. `infer_content_type` can pick
+/// the content type.
 ///
 /// ## Examples
 ///
@@ -204,8 +209,8 @@ fn new_form_data_part(
   other_headers: List(#(String, String)),
   body: BitArray,
 ) -> Result(Part, MultipartError) {
-  // A filename that is not ASCII goes out percent-encoded, so new_part would
-  // not see a CR, LF or NUL in it. Check both values here.
+  // Report the name or filename itself, not the whole header value that
+  // new_part would report.
   use _ <- result.try(
     list.try_each([name, ..option.values([filename])], fn(value) {
       case disposition.has_header_breaking_bytes(value) {
@@ -231,8 +236,9 @@ fn new_form_data_part(
 /// `name`, `filename` and `content_type` are read from the headers in the
 /// same way as for a parsed part.
 ///
-/// Returns `Error(InvalidHeaderName(name))` for a header name that is empty,
-/// starts with a space or tab, or contains CR, LF, NUL or `:`. Returns
+/// Returns `Error(InvalidHeaderName(name))` for a header name that is empty
+/// or holds `:`, a space, a tab or another character outside printable
+/// ASCII, as `parse` would reject it. Returns
 /// `Error(InvalidHeaderValue(name, value))` for a value with CR, LF or NUL,
 /// and `Error(InvalidContentDisposition(value))` or
 /// `Error(InvalidQuotedPair(value))` when the `Content-Disposition` header
@@ -265,11 +271,7 @@ fn check_header(
 ) -> Result(#(String, String), MultipartError) {
   let #(name, value) = header
   use <- bool.guard(
-    when: name == ""
-      || string.starts_with(name, " ")
-      || string.starts_with(name, "\t")
-      || string.contains(name, ":")
-      || disposition.has_header_breaking_bytes(name),
+    when: !header_block.is_valid_name(name),
     return: Error(InvalidHeaderName(name)),
   )
   use <- bool.guard(
@@ -400,13 +402,16 @@ pub fn body(part: Part) -> BitArray {
 ///
 /// `content_type` is the HTTP `Content-Type` value with its `boundary`
 /// parameter. The preamble before the first boundary and the epilogue after
-/// the last one are ignored. Lines may end in CRLF or LF.
+/// the last one are ignored. Lines may end in CRLF or LF, and a header line
+/// that starts with a space or tab continues the one before it.
 ///
 /// The Content-Type is checked first: `InvalidContentType`, then
 /// `UnsupportedMediaType`, `MissingBoundary` and `InvalidBoundary`. Then the
 /// body may fail with `UnexpectedEndOfInput`, `InvalidHeader`,
 /// `InvalidContentDisposition`, `InvalidQuotedPair` or one of the limit
-/// errors.
+/// errors. The body is read up to `max_body_bytes` and the first problem in
+/// it is reported, so a body that is too large but has a bad header before
+/// the limit fails with the header error, as in `stream.parse`.
 ///
 /// ## Examples
 ///
@@ -433,32 +438,55 @@ pub fn parse(
   content_type: String,
   limits: Limits,
 ) -> Result(List(Part), MultipartError) {
-  use boundary <- result.try(boundary(content_type))
-  use <- bool.guard(
-    when: bit_array.byte_size(body) > limits.max_body_bytes,
-    return: Error(BodyTooLarge(limits.max_body_bytes)),
-  )
-  let pattern = scan.dash_pattern(boundary)
-  case scan.find_delimiter(body, pattern, 0) {
-    scan.Incomplete -> Error(UnexpectedEndOfInput)
+  use boundary <- result.try(read_boundary(content_type))
+  // Read no more than max_body_bytes, as stream.parse does, and report the
+  // first problem in the order the bytes come. Then the result does not
+  // depend on whether the body arrives whole or in chunks.
+  let #(body, out_of_bytes) = case
+    bit_array.byte_size(body) > limits.max_body_bytes
+  {
+    True -> #(
+      bytes.slice_or_empty(body, 0, int.max(limits.max_body_bytes, 0)),
+      BodyTooLarge(limits.max_body_bytes),
+    )
+    False -> #(body, UnexpectedEndOfInput)
+  }
+  let input =
+    Input(body:, pattern: scan.dash_pattern(boundary), limits:, out_of_bytes:)
+  case scan.find_delimiter(body, input.pattern, 0) {
+    scan.Incomplete(_) -> Error(out_of_bytes)
     // The first delimiter is the closing one: a body with no parts.
-    scan.Found(_, scan.Closing, _) -> Ok([])
-    scan.Found(_, scan.Delimiter, after) ->
-      parse_loop(body, pattern, after, limits, [], 0)
+    scan.Found(_, scan.Closing, _) -> finish(input, [])
+    scan.Found(_, scan.Delimiter, after) -> parse_loop(input, after, [], 0)
   }
 }
 
+type Input {
+  Input(
+    body: BitArray,
+    pattern: BitArray,
+    limits: Limits,
+    // The error for needing a byte past the end of `body`:
+    // `BodyTooLarge` when the body was cut at max_body_bytes.
+    out_of_bytes: MultipartError,
+  )
+}
+
 fn parse_loop(
-  body: BitArray,
-  pattern: BitArray,
+  input: Input,
   cursor: Int,
-  limits: Limits,
   parts: List(Part),
   count: Int,
 ) -> Result(List(Part), MultipartError) {
+  let Input(body:, limits:, ..) = input
   use #(blank_at, body_start) <- result.try(
     bytes.find_blank_line(body, cursor)
-    |> result.replace_error(unterminated_headers(body, cursor, limits)),
+    |> result.replace_error(
+      case bit_array.byte_size(body) - cursor > limits.max_header_bytes {
+        True -> HeaderTooLarge(limits.max_header_bytes)
+        False -> input.out_of_bytes
+      },
+    ),
   )
   use <- bool.guard(
     when: body_start - cursor > limits.max_header_bytes,
@@ -467,8 +495,13 @@ fn parse_loop(
   use head <- result.try(
     parse_part_headers(bytes.slice_or_empty(body, cursor, blank_at - cursor)),
   )
-  case scan.find_delimiter(body, pattern, body_start) {
-    scan.Incomplete -> Error(UnexpectedEndOfInput)
+  case scan.find_delimiter(body, input.pattern, body_start) {
+    // The bytes before body_until are body whatever comes next.
+    scan.Incomplete(body_until) ->
+      case body_until - body_start > limits.max_part_bytes {
+        True -> Error(PartTooLarge(limits.max_part_bytes))
+        False -> Error(input.out_of_bytes)
+      }
     scan.Found(body_end, kind, after) -> {
       let size = body_end - body_start
       use <- bool.guard(
@@ -479,125 +512,45 @@ fn parse_loop(
         when: count + 1 > limits.max_parts,
         return: Error(TooManyParts(limits.max_parts)),
       )
-      let part =
-        Part(..head, body: bytes.slice_or_empty(body, body_start, size))
+      let parts = [
+        Part(..head, body: bytes.slice_or_empty(body, body_start, size)),
+        ..parts
+      ]
       case kind {
-        scan.Closing -> Ok(list.reverse([part, ..parts]))
-        scan.Delimiter ->
-          parse_loop(body, pattern, after, limits, [part, ..parts], count + 1)
+        scan.Closing -> finish(input, list.reverse(parts))
+        scan.Delimiter -> parse_loop(input, after, parts, count + 1)
       }
     }
   }
 }
 
-/// The error for a header block with no blank line after it. Shared with
-/// `multipartkit/stream`, so both parsers agree.
-@internal
-pub fn unterminated_headers(
-  buffer: BitArray,
-  cursor: Int,
-  limits: Limits,
-) -> MultipartError {
-  use <- bool.guard(
-    when: bit_array.byte_size(buffer) - cursor > limits.max_header_bytes,
-    return: HeaderTooLarge(limits.max_header_bytes),
-  )
-  UnexpectedEndOfInput
-}
-
-/// Reads the boundary from a Content-Type value. Shared with
-/// `multipartkit/stream`.
-@internal
-pub fn boundary(content_type: String) -> Result(String, MultipartError) {
-  let invalid = InvalidContentType(content_type)
-  use #(media_type, parameters) <- result.try(
-    parse_media_type(text.skip_ows(content_type))
-    |> result.replace_error(invalid),
-  )
-  use <- bool.guard(
-    when: !is_multipart(media_type),
-    return: Error(UnsupportedMediaType(media_type)),
-  )
-  use found <- result.try(
-    parse_parameters(parameters, [], text.read_token_or_quoted)
-    |> result.replace_error(invalid),
-  )
-  case text.find_ci(found, "boundary") {
-    Error(Nil) -> Error(MissingBoundary)
-    Ok(value) ->
-      case text.is_valid_boundary(value) {
-        True -> Ok(value)
-        False -> Error(InvalidBoundary(value))
-      }
+/// After the closing delimiter: the epilogue is ignored, but a body cut at
+/// max_body_bytes is still too large.
+fn finish(
+  input: Input,
+  parts: List(Part),
+) -> Result(List(Part), MultipartError) {
+  case input.out_of_bytes {
+    BodyTooLarge(_) as error -> Error(error)
+    _ -> Ok(parts)
   }
 }
 
-fn parse_media_type(input: String) -> Result(#(String, String), Nil) {
-  case text.read_token(input) {
-    #("", _) -> Error(Nil)
-    #(type_, rest) ->
-      case string.pop_grapheme(rest) {
-        Ok(#("/", rest)) ->
-          case text.read_token(rest) {
-            #("", _) -> Error(Nil)
-            #(subtype, tail) -> Ok(#(type_ <> "/" <> subtype, tail))
-          }
-        _ -> Error(Nil)
-      }
-  }
-}
-
-fn is_multipart(media_type: String) -> Bool {
-  let lower = text.ascii_lowercase(media_type)
-  string.starts_with(lower, "multipart/") && lower != "multipart/"
-}
-
-type ParameterError(value_error) {
-  MalformedParameter
-  MalformedValue(value_error)
-}
-
-/// Reads `; key=value` parameters until the end of the input, using
-/// `read_value` for each value.
-fn parse_parameters(
-  input: String,
-  parameters: List(#(String, String)),
-  read_value: fn(String) -> Result(#(String, String), value_error),
-) -> Result(List(#(String, String)), ParameterError(value_error)) {
-  case text.skip_ows(input) {
-    "" -> Ok(list.reverse(parameters))
-    ";" <> rest -> {
-      use #(parameter, rest) <- result.try(parse_parameter(rest, read_value))
-      parse_parameters(rest, [parameter, ..parameters], read_value)
+fn read_boundary(content_type: String) -> Result(String, MultipartError) {
+  text.boundary(content_type)
+  |> result.map_error(fn(fault) {
+    case fault {
+      text.MalformedContentType -> InvalidContentType(content_type)
+      text.NotMultipart(media_type) -> UnsupportedMediaType(media_type)
+      text.NoBoundary -> MissingBoundary
+      text.BadBoundary(boundary) -> InvalidBoundary(boundary)
     }
-    _ -> Error(MalformedParameter)
-  }
+  })
 }
 
-fn parse_parameter(
-  input: String,
-  read_value: fn(String) -> Result(#(String, String), value_error),
-) -> Result(#(#(String, String), String), ParameterError(value_error)) {
-  case text.read_token(text.skip_ows(input)) {
-    #("", _) -> Error(MalformedParameter)
-    #(key, "=" <> rest) -> {
-      use #(value, rest) <- result.try(
-        read_value(rest) |> result.map_error(MalformedValue),
-      )
-      Ok(#(#(key, value), rest))
-    }
-    _ -> Error(MalformedParameter)
-  }
-}
-
-/// Parses one part's header block into a part with an empty body. Shared with
-/// `multipartkit/stream`.
-@internal
-pub fn parse_part_headers(block: BitArray) -> Result(Part, MultipartError) {
-  use headers <- result.try(
-    header_block.parse_block(block)
-    |> result.map_error(fn(invalid) { InvalidHeader(invalid.line) }),
-  )
+/// Parses one part's header block into a part with an empty body.
+fn parse_part_headers(block: BitArray) -> Result(Part, MultipartError) {
+  use headers <- result.try(header_block.parse_block(block, InvalidHeader))
   from_headers(headers, <<>>)
 }
 
@@ -607,10 +560,14 @@ pub fn parse_part_headers(block: BitArray) -> Result(Part, MultipartError) {
 /// for other uses, such as the `attachment` parts of a `multipart/mixed`
 /// body.
 ///
+/// Parameter names ignore case, and whitespace may surround `=`.
+///
+/// A `filename*` (or `name*`) that is not RFC 5987 UTF-8 or ISO-8859-1, or
+/// that decodes to CR, LF or NUL, is ignored, and `filename` is used.
+///
 /// Returns `Error(InvalidQuotedPair(value))` when a quoted string escapes a
 /// control character, and `Error(InvalidContentDisposition(value))` for any
-/// other malformed value, including a `filename*` that is not valid UTF-8 or
-/// ISO-8859-1 or decodes to CR, LF or NUL.
+/// other malformed value, including a parameter given twice.
 ///
 /// ## Examples
 ///
@@ -637,40 +594,35 @@ pub fn parse_content_disposition(
     #("", _) -> Error(invalid)
     #(token, rest) -> {
       use parameters <- result.try(
-        parse_parameters(rest, [], text.read_token_or_quoted_strict)
-        |> result.map_error(fn(error) {
-          case error {
-            MalformedValue(QuotedPairInvalid) -> InvalidQuotedPair(value)
-            MalformedValue(QuotedSyntax) | MalformedParameter -> invalid
+        text.parse_parameters(rest, spaced_equals: True)
+        |> result.map_error(fn(fault) {
+          case fault {
+            QuotedPairInvalid -> InvalidQuotedPair(value)
+            QuotedSyntax -> invalid
           }
         }),
       )
-      use name <- result.try(pick_parameter(parameters, "name", invalid))
-      use filename <- result.try(pick_parameter(parameters, "filename", invalid))
       Ok(ContentDisposition(
         disposition: text.ascii_lowercase(token),
-        name:,
-        filename:,
+        name: pick_parameter(parameters, "name"),
+        filename: pick_parameter(parameters, "filename"),
         parameters:,
       ))
     }
   }
 }
 
-/// Returns the decoded `key*` parameter if present, otherwise the plain `key`
-/// parameter.
+/// Returns the decoded `key*` parameter if present and valid, otherwise the
+/// plain `key` parameter. As RFC 6266 §4.3 suggests, a `key*` that cannot be
+/// decoded is ignored rather than failing the whole body.
 fn pick_parameter(
   parameters: List(#(String, String)),
   key: String,
-  invalid: MultipartError,
-) -> Result(Option(String), MultipartError) {
-  case text.find_ci(parameters, key <> "*") {
-    Ok(raw) ->
-      disposition.decode_extended_value(raw)
-      |> result.map(Some)
-      |> result.replace_error(invalid)
-    Error(Nil) -> Ok(option.from_result(text.find_ci(parameters, key)))
-  }
+) -> Option(String) {
+  text.find_ci(parameters, key <> "*")
+  |> result.try(disposition.decode_extended_value)
+  |> result.lazy_or(fn() { text.find_ci(parameters, key) })
+  |> option.from_result
 }
 
 // Querying parts --------------------------------------------------------------
@@ -792,7 +744,9 @@ fn strip_parameters(value: String) -> String {
 ///
 /// Returns `Error(InvalidBoundary(boundary))` when the boundary is empty,
 /// longer than 70 characters, ends in a space or contains a character RFC
-/// 2046 does not allow. Use `encode_form` to get a random boundary instead.
+/// 2046 does not allow, or when a header or body line of a part starts with
+/// `--` and the boundary, which a receiver would read as a delimiter. Use
+/// `encode_form` to get a random boundary instead.
 ///
 /// ## Examples
 ///
@@ -817,10 +771,20 @@ pub fn encode(
   boundary: String,
 ) -> Result(BitArray, MultipartError) {
   use <- bool.guard(
-    when: !text.is_valid_boundary(boundary),
+    when: !text.is_valid_boundary(boundary)
+      || list.any(parts, collides(_, scan.dash_pattern(boundary))),
     return: Error(InvalidBoundary(boundary)),
   )
   Ok(encode_with_valid_boundary(parts, boundary))
+}
+
+/// True when a header or body line of the part starts with the
+/// dash-boundary. Both the header block and the body start a line.
+fn collides(part: Part, pattern: BitArray) -> Bool {
+  let starts = fn(data) {
+    result.is_error(scan.check_line_starts(Some(<<>>), data, pattern))
+  }
+  starts(header_block.encode_block(part.headers)) || starts(part.body)
 }
 
 fn encode_with_valid_boundary(parts: List(Part), boundary: String) -> BitArray {
@@ -845,7 +809,7 @@ fn encode_with_valid_boundary(parts: List(Part), boundary: String) -> BitArray {
 /// the HTTP `Content-Type` header.
 ///
 /// The boundary comes from `int.random`, which is not cryptographically
-/// strong.
+/// strong. A boundary that a line of a part starts with is drawn again.
 ///
 /// ## Examples
 ///
@@ -857,10 +821,13 @@ fn encode_with_valid_boundary(parts: List(Part), boundary: String) -> BitArray {
 ///
 pub fn encode_form(parts: List(Part)) -> #(String, BitArray) {
   let boundary = "----multipartkit-" <> random_boundary_characters(24, "")
-  #(
-    "multipart/form-data; boundary=" <> boundary,
-    encode_with_valid_boundary(parts, boundary),
-  )
+  case list.any(parts, collides(_, scan.dash_pattern(boundary))) {
+    True -> encode_form(parts)
+    False -> #(
+      "multipart/form-data; boundary=" <> boundary,
+      encode_with_valid_boundary(parts, boundary),
+    )
+  }
 }
 
 fn random_boundary_characters(remaining: Int, characters: String) -> String {

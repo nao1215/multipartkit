@@ -12,15 +12,15 @@
 
 ## Differential testing
 
-`test/multipartkit/stream_differential_test.gleam` compares the buffered parser (`multipartkit.parse`) with the streaming parser (`stream.parse`), two implementations of the same grammar. For random forms whose file bodies are full of CR, LF, `--` and delimiter prefixes, cut into random chunk sizes, both must return the same parts. The same holds for damaged messages (a byte range dropped or a byte inserted), where both must fail with the same error, and with every limit set one below, at and one above what the message needs. This test found that the streaming parser ignored the epilogue for `max_body_bytes` when it arrived in a later chunk.
+`test/multipartkit/stream_differential_test.gleam` compares the buffered parser (`multipartkit.parse`) with the streaming parser (`stream.parse`), two implementations of the same grammar. For random forms whose file bodies are full of CR, LF, `--` and delimiter prefixes, cut into random chunk sizes, both must return the same parts. The same holds for damaged messages (a byte range dropped or a byte inserted), where both must fail with the same error, and with every limit set one below, at and one above what the message needs. A second generator writes messages by hand from the pieces of the RFC 2046 grammar that `encode_form` never writes: LF-only lines, transport padding, preambles, epilogues, folded and malformed headers and empty bodies. Those are compared at the default limits, at random small limits, and between two different splits of the same input. This test found that the streaming parser ignored the epilogue for `max_body_bytes` when it arrived in a later chunk, and that with small limits the result depended on the split: a body over `max_body_bytes` with an earlier problem, transport padding counted as part body, and an unfinished part over `max_part_bytes`.
 
 ## Boundary tables
 
-`test/multipartkit/char_class_test.gleam` walks every ASCII code point through the RFC 5987 `attr-char` set (which bytes `filename*` leaves unescaped), the printable-ASCII rule for the plain `filename=` form and the RFC 7230 `quoted-pair` grammar, and round-trips every printable character through a quoted filename.
+`test/multipartkit/char_class_test.gleam` walks every ASCII code point through the RFC 5987 `attr-char` set (which characters a `filename*` value may hold), the RFC 7230 `quoted-pair` grammar, and the quoted `filename` that `new_file` writes, which round-trips every byte but CR, LF and NUL. `test/regression_rfc_conformance_test.gleam` holds the cases found by reading RFC 2046 §5.1 and RFC 7578 against the code.
 
 ## Nightly runs
 
-`.github/workflows/nightly-property.yml` runs the whole suite ten times with `METAMON_RUNS_MULTIPLIER=10`, each pass with a new seed. A failure report prints its seed, so the case can be replayed with `metamon.with_seed` and kept as a regression test.
+`.github/workflows/nightly-property.yml` runs the whole suite ten times with `METAMON_RUNS_MULTIPLIER=10`, each pass with a new seed. A failure report prints its seed and the shrunk input, so the case can be replayed with `metamon.Config(..metamon.default_config(), seed: Some(seed))` and kept as a regression test.
 
 ## Mutation testing
 

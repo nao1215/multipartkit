@@ -2,7 +2,6 @@
 //// against the grammar written out from the RFC, so a range check that is
 //// off by one or a missing entry in a long `||` chain fails here.
 
-import gleam/int
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
@@ -29,35 +28,38 @@ fn is_attr_char(code: Int) -> Bool {
   || list.contains([0x5E, 0x5F, 0x60, 0x7C, 0x7E], code)
 }
 
-fn percent(code: Int) -> String {
-  "%" <> string.pad_start(int.to_base16(code), to: 2, with: "0")
-}
-
-pub fn filename_star_encodes_exactly_the_non_attr_chars_test() {
-  // A non-ASCII grapheme forces the RFC 5987 `filename*` form; the byte
-  // after it must stay literal if and only if it is an attr-char.
-  range(0x20, 0x7E)
+pub fn ext_value_accepts_exactly_attr_chars_test() {
+  // RFC 5987 §3.2.1 value-chars := *( pct-encoded / attr-char ). The value
+  // is quoted so that the token rules do not decide first.
+  ascii()
   |> list.each(fn(code) {
-    let header =
-      disposition.build_form_data_value("f", Some("\u{00E9}" <> char(code)))
-    let expected = case is_attr_char(code) {
-      True -> char(code)
-      False -> percent(code)
+    let escaped = case code {
+      0x22 -> "\\\""
+      0x5C -> "\\\\"
+      _ -> char(code)
     }
-    let assert Ok(#(_, star)) = string.split_once(header, "filename*=UTF-8''")
-    star |> should.equal("%C3%A9" <> expected)
+    let value = "attachment; filename*=\"UTF-8''a" <> escaped <> "b\""
+    // A value that is not valid is ignored, so there is no filename.
+    let assert Ok(parsed) = multipartkit.parse_content_disposition(value)
+    let expected = case is_attr_char(code) {
+      True -> Some("a" <> char(code) <> "b")
+      False -> None
+    }
+    parsed.filename |> should.equal(expected)
   })
 }
 
-pub fn plain_filename_is_used_only_for_printable_ascii_and_tab_test() {
-  // Bytes outside HTAB / SP..~ (except CR, LF and NUL, which new_file
-  // rejects) need the `filename*` form.
+pub fn every_filename_byte_but_cr_lf_nul_round_trips_test() {
+  // new_file rejects CR, LF and NUL. Every other ASCII byte goes in the
+  // quoted `filename` as it is, never in `filename*` (RFC 7578 §4.2).
   ascii()
   |> list.filter(fn(code) { code != 0x00 && code != 0x0A && code != 0x0D })
   |> list.each(fn(code) {
-    let header = disposition.build_form_data_value("f", Some("a" <> char(code)))
-    let safe = code == 0x09 || { code >= 0x20 && code <= 0x7E }
-    string.contains(header, "filename*=") |> should.equal(!safe)
+    let filename = "a" <> char(code) <> "b"
+    let header = disposition.build_form_data_value("f", Some(filename))
+    string.contains(header, "filename*") |> should.be_false
+    let assert Ok(parsed) = multipartkit.parse_content_disposition(header)
+    parsed.filename |> should.equal(Some(filename))
   })
 }
 

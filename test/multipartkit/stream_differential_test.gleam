@@ -6,10 +6,11 @@
 
 import gleam/bit_array
 import gleam/list
+import gleam/result
+import gleam/string
 import gleam/yielder
 import metamon
 import metamon/generator.{type Generator}
-import metamon/generator/range
 import multipartkit.{type MultipartError}
 import multipartkit/stream
 import support
@@ -24,28 +25,33 @@ type Entry {
 fn tricky_bytes() -> Generator(BitArray) {
   generator.list_of(
     generator.frequency([
-      #(4, generator.bit_array(range.constant(0, 12))),
+      #(4, generator.bit_array(bytes: generator.range(from: 0, to: 12))),
       #(1, generator.return(<<"\r\n":utf8>>)),
       #(1, generator.return(<<"\r\n--":utf8>>)),
       #(1, generator.return(<<"--":utf8>>)),
       #(1, generator.return(<<"\r":utf8>>)),
       #(1, generator.return(<<"\n":utf8>>)),
     ]),
-    range.constant(0, 12),
+    length: generator.range(from: 0, to: 12),
   )
   |> generator.map(bit_array.concat)
 }
 
 fn name_gen() -> Generator(String) {
-  generator.string_alphanumeric(range.constant(1, 8))
-  |> generator.no_edges
+  generator.string(
+    of: generator.Alphanumeric,
+    length: generator.range(from: 1, to: 8),
+  )
 }
 
 fn entry_gen() -> Generator(Entry) {
   generator.one_of([
     generator.tuple2(
       name_gen(),
-      generator.string_printable_ascii(range.constant(0, 24)),
+      generator.string(
+        of: generator.PrintableAscii,
+        length: generator.range(from: 0, to: 24),
+      ),
     )
       |> generator.map(fn(p) { Field(p.0, p.1) }),
     generator.tuple3(
@@ -150,13 +156,16 @@ fn collect(
 }
 
 fn sizes_gen() -> Generator(List(Int)) {
-  generator.list_of(generator.int(range.constant(1, 40)), range.constant(1, 6))
+  generator.list_of(
+    generator.int(generator.range(from: 1, to: 40)),
+    length: generator.range(from: 1, to: 6),
+  )
 }
 
 pub fn stream_matches_buffered_for_encoded_forms_test() -> Nil {
   metamon.forall(
     generator.tuple2(
-      generator.list_of(entry_gen(), range.constant(0, 4)),
+      generator.list_of(entry_gen(), length: generator.range(from: 0, to: 4)),
       sizes_gen(),
     ),
     fn(input) {
@@ -165,7 +174,7 @@ pub fn stream_matches_buffered_for_encoded_forms_test() -> Nil {
       let limits = multipartkit.default_limits
       let expected = buffered(body, content_type, limits)
       let assert Ok(_) = expected
-      streamed(chunk(body, sizes), content_type, limits) == expected
+      assert streamed(chunk(body, sizes), content_type, limits) == expected
     },
   )
 }
@@ -175,12 +184,12 @@ pub fn stream_matches_buffered_for_encoded_forms_test() -> Nil {
 pub fn stream_matches_buffered_for_damaged_messages_test() -> Nil {
   metamon.forall(
     generator.tuple3(
-      generator.list_of(entry_gen(), range.constant(1, 3)),
+      generator.list_of(entry_gen(), length: generator.range(from: 1, to: 3)),
       sizes_gen(),
       generator.tuple3(
-        generator.int(range.constant(0, 1000)),
-        generator.int(range.constant(0, 8)),
-        generator.byte(),
+        generator.int(generator.range(from: 0, to: 1000)),
+        generator.int(generator.range(from: 0, to: 8)),
+        generator.int(generator.range(from: 0, to: 255)),
       ),
     ),
     fn(input) {
@@ -199,8 +208,8 @@ pub fn stream_matches_buffered_for_damaged_messages_test() -> Nil {
         _ -> bit_array.append(head, tail)
       }
       let limits = multipartkit.default_limits
-      streamed(chunk(damaged, sizes), content_type, limits)
-      == buffered(damaged, content_type, limits)
+      assert streamed(chunk(damaged, sizes), content_type, limits)
+        == buffered(damaged, content_type, limits)
     },
   )
 }
@@ -211,11 +220,11 @@ pub fn stream_matches_buffered_for_damaged_messages_test() -> Nil {
 pub fn stream_matches_buffered_at_limit_boundaries_test() -> Nil {
   metamon.forall(
     generator.tuple3(
-      generator.list_of(entry_gen(), range.constant(1, 3)),
+      generator.list_of(entry_gen(), length: generator.range(from: 1, to: 3)),
       sizes_gen(),
       generator.tuple2(
         generator.element_of(["body", "part", "parts", "header"]),
-        generator.int(range.constant(-1, 1)),
+        generator.int(generator.range(from: -1, to: 1)),
       ),
     ),
     fn(input) {
@@ -252,8 +261,8 @@ pub fn stream_matches_buffered_at_limit_boundaries_test() -> Nil {
         _ -> Ok(multipartkit.Limits(b, p, n, at(header_size(seen))))
       }
       let assert Ok(limits) = limits
-      streamed(chunk(body, sizes), content_type, limits)
-      == buffered(body, content_type, limits)
+      assert streamed(chunk(body, sizes), content_type, limits)
+        == buffered(body, content_type, limits)
     },
   )
 }
@@ -268,5 +277,180 @@ fn header_size(seen: Seen) -> Int {
       True -> n
       False -> acc
     }
+  })
+}
+
+// ---------- raw messages ----------
+
+// Messages written by hand from the pieces of the RFC 2046 §5.1.1 grammar
+// that `encode_form` never writes: LF-only lines, transport padding (and
+// padding before the closing `--`, which is not a delimiter), preambles,
+// epilogues, folded and malformed headers, parts with no headers, and an
+// empty body whose blank line is also the delimiter's line break.
+
+fn raw_boundary_gen() -> Generator(String) {
+  generator.element_of(["b", "simple boundary", "--x", "a'()+_,-./:=?"])
+}
+
+fn line_end_gen() -> Generator(String) {
+  generator.element_of(["\r\n", "\n"])
+}
+
+fn header_line_gen() -> Generator(String) {
+  generator.element_of([
+    "Content-Disposition: form-data; name=\"a\"",
+    "content-disposition: form-data; name=b; filename=\"f.txt\"",
+    "Content-Disposition: form-data;\r\n name=\"folded\"",
+    "Content-Disposition: form-data;\n\tname=\"lf-folded\"",
+    "Content-Type: text/plain",
+    "Content-Disposition: form-data; name=\"a\"; name=\"a\"",
+    "X-Space : 1",
+    "no colon",
+    " leading continuation",
+    "X-Cr: a\rb",
+  ])
+}
+
+fn padding_gen() -> Generator(String) {
+  generator.element_of(["", "", " ", "\t ", " --"])
+}
+
+fn raw_part_gen() -> Generator(String) {
+  generator.tuple4(
+    generator.list_of(
+      generator.tuple2(header_line_gen(), line_end_gen()),
+      length: generator.range(from: 0, to: 3),
+    ),
+    line_end_gen(),
+    generator.element_of(["", "x", "line\r\nline", "-", "--", "\r", "\n"]),
+    generator.element_of(["\r\n", "\n", ""]),
+  )
+  |> generator.map(fn(piece) {
+    let #(headers, blank, body, before_delimiter) = piece
+    let headers =
+      list.map(headers, fn(header) { header.0 <> header.1 }) |> string.concat
+    headers <> blank <> body <> before_delimiter
+  })
+}
+
+fn raw_message_gen() -> Generator(#(String, BitArray)) {
+  generator.tuple4(
+    raw_boundary_gen(),
+    generator.element_of(["", "preamble\r\n", "x\n", "--bx\r\n"]),
+    generator.list_of(
+      generator.tuple2(padding_gen(), raw_part_gen()),
+      length: generator.range(from: 0, to: 3),
+    ),
+    generator.tuple2(
+      padding_gen(),
+      generator.element_of(["", "\r\n", "\r\nepilogue", "\n--b\r\n", "x"]),
+    ),
+  )
+  |> generator.map(fn(piece) {
+    let #(boundary, preamble, parts, #(close_padding, epilogue)) = piece
+    let dash = "--" <> boundary
+    let parts =
+      list.map(parts, fn(part) { dash <> part.0 <> "\r\n" <> part.1 })
+      |> string.concat
+    let body = preamble <> parts <> dash <> "--" <> close_padding <> epilogue
+    #(
+      "multipart/form-data; boundary=\"" <> boundary <> "\"",
+      bit_array.from_string(body),
+    )
+  })
+}
+
+pub fn stream_matches_buffered_for_raw_messages_test() -> Nil {
+  metamon.forall(generator.tuple2(raw_message_gen(), sizes_gen()), fn(input) {
+    let #(#(content_type, body), sizes) = input
+    let limits = multipartkit.default_limits
+    metamon.classify(
+      label: "accepted",
+      when: result.is_ok(buffered(body, content_type, limits)),
+    )
+    assert streamed(chunk(body, sizes), content_type, limits)
+      == buffered(body, content_type, limits)
+  })
+}
+
+/// The same with small limits, so that every limit error is reached on
+/// raw input too.
+pub fn stream_matches_buffered_for_raw_messages_at_small_limits_test() -> Nil {
+  let small = generator.int(generator.range(from: 0, to: 64))
+  metamon.forall(
+    generator.tuple3(
+      raw_message_gen(),
+      sizes_gen(),
+      generator.tuple4(
+        generator.int(generator.range(from: 0, to: 400)),
+        small,
+        generator.int(generator.range(from: 0, to: 3)),
+        small,
+      ),
+    ),
+    fn(input) {
+      let #(#(content_type, body), sizes, #(b, p, n, h)) = input
+      let limits = multipartkit.Limits(b, p, n, h)
+      assert streamed(chunk(body, sizes), content_type, limits)
+        == buffered(body, content_type, limits)
+    },
+  )
+}
+
+/// Chunking is not observable: two different splits of the same input
+/// give the same result.
+pub fn stream_result_does_not_depend_on_the_split_test() -> Nil {
+  metamon.forall(
+    generator.tuple3(raw_message_gen(), sizes_gen(), sizes_gen()),
+    fn(input) {
+      let #(#(content_type, body), first, second) = input
+      let limits = multipartkit.default_limits
+      assert streamed(chunk(body, first), content_type, limits)
+        == streamed(chunk(body, second), content_type, limits)
+    },
+  )
+}
+
+// ---------- Content-Type ----------
+
+// `multipartkit` and `multipartkit/stream` each turn the internal boundary
+// fault into a `MultipartError`. Random Content-Type values reach every
+// fault, so the two must give the same error.
+
+fn content_type_gen() -> Generator(String) {
+  generator.tuple3(
+    generator.element_of([
+      "multipart/form-data", "multipart/mixed", "Multipart/Form-Data",
+      "text/plain", "multipart/", "multipart", "", " multipart/x", "a/b/c",
+    ]),
+    generator.list_of(
+      generator.element_of([
+        "; boundary=b", "; boundary=\"a b\"", "; BOUNDARY=x", "; boundary=",
+        "; boundary=\"<>\"", "; boundary = b", ";", "; charset=utf-8",
+        "; boundary=\"a\\\u{0001}\"", "; =x", " junk", "; boundary=b ",
+      ]),
+      length: generator.range(from: 0, to: 3),
+    ),
+    generator.element_of(["", " ", "\t"]),
+  )
+  |> generator.map(fn(piece) {
+    let #(media_type, parameters, tail) = piece
+    media_type <> string.concat(parameters) <> tail
+  })
+}
+
+pub fn content_type_errors_match_test() -> Nil {
+  metamon.forall(content_type_gen(), fn(content_type) {
+    let limits = multipartkit.default_limits
+    let buffered_error = case multipartkit.parse(<<>>, content_type, limits) {
+      Error(multipartkit.UnexpectedEndOfInput) -> Ok(Nil)
+      Error(error) -> Error(error)
+      Ok(_) -> Ok(Nil)
+    }
+    let streamed_error =
+      stream.parse(yielder.empty(), content_type, limits)
+      |> result.replace(Nil)
+    metamon.classify(label: "valid", when: result.is_ok(streamed_error))
+    assert streamed_error == buffered_error
   })
 }

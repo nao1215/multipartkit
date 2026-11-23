@@ -5,7 +5,11 @@
 //// only ever inspect ASCII bytes in this library. Non-ASCII content inside
 //// header values is preserved verbatim by quoted-string handling.
 
+import gleam/bool
 import gleam/list
+import gleam/option.{type Option, None, Some}
+import gleam/result
+import gleam/set.{type Set}
 import gleam/string
 
 /// Internal: Skip leading optional whitespace (spaces and tabs) per RFC 7230.
@@ -56,55 +60,13 @@ fn is_alnum(grapheme: String) -> Bool {
   }
 }
 
-/// Internal: Read a quoted-string per RFC 7230 §3.2.6 from the head of
-/// `input`. The opening `"` must be the first character; the result strips
-/// the outer quotes and resolves backslash escapes.
-///
-/// Returns `Error(Nil)` if the input does not start with `"`, or if the
-/// quoted-string is unterminated.
-fn read_quoted_string(input: String) -> Result(#(String, String), Nil) {
-  case string.pop_grapheme(input) {
-    Ok(#("\"", rest)) -> read_quoted_loop(rest, "")
-    _ -> Error(Nil)
-  }
-}
-
-fn read_quoted_loop(
-  input: String,
-  acc: String,
-) -> Result(#(String, String), Nil) {
-  case string.pop_grapheme(input) {
-    Error(_) -> Error(Nil)
-    Ok(#("\"", rest)) -> Ok(#(acc, rest))
-    Ok(#("\\", rest)) ->
-      case string.pop_grapheme(rest) {
-        Error(_) -> Error(Nil)
-        Ok(#(escaped, after)) -> read_quoted_loop(after, acc <> escaped)
-      }
-    Ok(#(grapheme, rest)) -> read_quoted_loop(rest, acc <> grapheme)
-  }
-}
-
-/// Internal: Read either a token or a quoted-string from the head of
-/// `input`. Returns `#(value, rest)` with `value` being the decoded text.
-pub fn read_token_or_quoted(input: String) -> Result(#(String, String), Nil) {
-  case string.starts_with(input, "\"") {
-    True -> read_quoted_string(input)
-    False -> {
-      let #(token, rest) = read_token(input)
-      case token {
-        "" -> Error(Nil)
-        _ -> Ok(#(token, rest))
-      }
-    }
-  }
-}
-
-/// Internal: Fault categories returned by `read_token_or_quoted_strict`.
+/// Internal: Fault categories returned by `read_token_or_quoted` and
+/// `parse_parameters`.
 ///
 /// - `QuotedSyntax`: the quoted-string is malformed in a way that is
 ///   not a quoted-pair grammar violation (e.g. unterminated, missing
-///   opening quote, or an empty token where one was expected).
+///   opening quote, or an empty token where one was expected), or a
+///   parameter is malformed or repeated.
 /// - `QuotedPairInvalid`: the input was otherwise a well-formed
 ///   quoted-string but contained a `\X` escape whose `X` falls outside
 ///   the RFC 7230 §3.2.6 `quoted-pair` grammar
@@ -114,12 +76,13 @@ pub type QuotedFault {
   QuotedPairInvalid
 }
 
-/// Internal: Like `read_token_or_quoted`, but enforces RFC 7230 §3.2.6
-/// strictly inside quoted-strings: the second character of a
-/// `quoted-pair` (`\X`) MUST be `HTAB`, `SP`, a `VCHAR` (`%x21-7E`),
-/// or `obs-text` (`%x80-FF`). Any other byte (NUL, CR, LF, other ASCII
-/// control bytes, or DEL) results in `Error(QuotedPairInvalid)`.
-pub fn read_token_or_quoted_strict(
+/// Internal: Read either a token or a quoted-string from the head of
+/// `input` and return `#(value, rest)`, with the quotes and escapes of a
+/// quoted-string removed. The second character of a `quoted-pair` (`\X`)
+/// must be `HTAB`, `SP`, a `VCHAR` (`%x21-7E`) or `obs-text` (RFC 9110
+/// §5.6.4). Any other byte (NUL, CR, LF, other ASCII control bytes, or
+/// DEL) results in `Error(QuotedPairInvalid)`.
+pub fn read_token_or_quoted(
   input: String,
 ) -> Result(#(String, String), QuotedFault) {
   case string.starts_with(input, "\"") {
@@ -270,6 +233,139 @@ pub fn find_ci(
         False -> find_ci(rest, key)
       }
   }
+}
+
+/// Internal: Read `; key=value` parameters until the end of the input.
+///
+/// As in RFC 9110 §5.6.6 an empty parameter (`;;`, or `;` at the end) is
+/// skipped. Whitespace may surround `=` only when `spaced_equals` is set:
+/// RFC 6266 §4.1 allows it in Content-Disposition, and RFC 9110 does not in
+/// a media type. A parameter given twice, ignoring case, is `QuotedSyntax`:
+/// RFC 6838 §4.3 and RFC 6266 §4.1 make it an error, and two parsers that
+/// pick different copies would read different values.
+pub fn parse_parameters(
+  input: String,
+  spaced_equals spaced_equals: Bool,
+) -> Result(List(#(String, String)), QuotedFault) {
+  parameters_loop(input, spaced_equals, [], set.new())
+}
+
+fn parameters_loop(
+  input: String,
+  spaced_equals: Bool,
+  parameters: List(#(String, String)),
+  // The lowercased names in `parameters`, to find a repeat in linear time.
+  seen: Set(String),
+) -> Result(List(#(String, String)), QuotedFault) {
+  // No `use` here: the recursive call must stay a tail call, or a value
+  // with thousands of parameters overflows the stack on JavaScript.
+  case next_parameter(input, spaced_equals) {
+    Error(fault) -> Error(fault)
+    Ok(None) -> Ok(list.reverse(parameters))
+    Ok(Some(#(#(key, _) as parameter, rest))) -> {
+      let name = ascii_lowercase(key)
+      case set.contains(seen, name) {
+        True -> Error(QuotedSyntax)
+        False ->
+          parameters_loop(
+            rest,
+            spaced_equals,
+            [parameter, ..parameters],
+            set.insert(seen, name),
+          )
+      }
+    }
+  }
+}
+
+/// Reads the next `; key=value`, skipping empty parameters. `None` at the
+/// end of the input.
+fn next_parameter(
+  input: String,
+  spaced_equals: Bool,
+) -> Result(Option(#(#(String, String), String)), QuotedFault) {
+  case skip_ows(input) {
+    "" -> Ok(None)
+    ";" <> rest ->
+      case skip_ows(rest) {
+        "" -> Ok(None)
+        ";" <> _ as rest -> next_parameter(rest, spaced_equals)
+        rest -> parse_parameter(rest, spaced_equals) |> result.map(Some)
+      }
+    _ -> Error(QuotedSyntax)
+  }
+}
+
+fn parse_parameter(
+  input: String,
+  spaced_equals: Bool,
+) -> Result(#(#(String, String), String), QuotedFault) {
+  let skip = case spaced_equals {
+    True -> skip_ows
+    False -> fn(input) { input }
+  }
+  case read_token(input) {
+    #("", _) -> Error(QuotedSyntax)
+    #(key, rest) ->
+      case skip(rest) {
+        "=" <> rest -> {
+          use #(value, rest) <- result.try(read_token_or_quoted(skip(rest)))
+          Ok(#(#(key, value), rest))
+        }
+        _ -> Error(QuotedSyntax)
+      }
+  }
+}
+
+/// Internal: Why `boundary` could not read a boundary.
+pub type BoundaryFault {
+  /// The value is not a media type with parameters.
+  MalformedContentType
+  /// The media type is not `multipart/*`.
+  NotMultipart(media_type: String)
+  /// There is no `boundary` parameter.
+  NoBoundary
+  /// The `boundary` parameter is not a valid boundary.
+  BadBoundary(boundary: String)
+}
+
+/// Internal: Read the boundary from a `multipart/*` Content-Type value.
+pub fn boundary(content_type: String) -> Result(String, BoundaryFault) {
+  use #(media_type, parameters) <- result.try(
+    parse_media_type(skip_ows(content_type)),
+  )
+  use <- bool.guard(
+    when: !is_multipart(media_type),
+    return: Error(NotMultipart(media_type)),
+  )
+  use found <- result.try(
+    parse_parameters(parameters, spaced_equals: False)
+    |> result.replace_error(MalformedContentType),
+  )
+  case find_ci(found, "boundary") {
+    Error(Nil) -> Error(NoBoundary)
+    Ok(value) ->
+      case is_valid_boundary(value) {
+        True -> Ok(value)
+        False -> Error(BadBoundary(value))
+      }
+  }
+}
+
+fn parse_media_type(input: String) -> Result(#(String, String), BoundaryFault) {
+  case read_token(input) {
+    #("", _) -> Error(MalformedContentType)
+    #(type_, "/" <> rest) ->
+      case read_token(rest) {
+        #("", _) -> Error(MalformedContentType)
+        #(subtype, tail) -> Ok(#(type_ <> "/" <> subtype, tail))
+      }
+    _ -> Error(MalformedContentType)
+  }
+}
+
+fn is_multipart(media_type: String) -> Bool {
+  string.starts_with(ascii_lowercase(media_type), "multipart/")
 }
 
 /// Internal: Return `True` when `value` satisfies the RFC 2046 §5.1.1
