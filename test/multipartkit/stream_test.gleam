@@ -339,3 +339,25 @@ pub fn parse_stream_counts_epilogue_against_max_body_bytes_test() {
     drain_parts(fits) |> list.length |> should.equal(1)
   })
 }
+
+pub fn stream_part_reads_file_metadata_test() {
+  let assert Ok(file) =
+    multipartkit.new_file(
+      name: "upload",
+      filename: "a.txt",
+      content_type: "text/plain",
+      body: <<"hi":utf8>>,
+    )
+  let assert Ok(body) = multipartkit.encode([file], "B")
+  let assert Ok(parts) =
+    stream.parse(
+      yielder.single(body),
+      "multipart/form-data; boundary=B",
+      multipartkit.default_limits,
+    )
+  let assert [Ok(part)] = yielder.to_list(parts)
+  stream.name(part) |> should.equal(Some("upload"))
+  stream.filename(part) |> should.equal(Some("a.txt"))
+  stream.content_type(part) |> should.equal(Some("text/plain"))
+  stream.headers(part) |> should.equal(multipartkit.headers(file))
+}
