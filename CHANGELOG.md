@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-23
+
 ### Changed
 
 The public API is smaller: the 13 public modules become `multipartkit` and `multipartkit/stream`, and 71 public functions become 29. Code that used the old modules needs updating.
