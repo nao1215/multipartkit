@@ -48,13 +48,13 @@ pub fn main() {
 /// before handing it back to multipartkit.
 pub fn mimetype_inferer() -> Inferer {
   let from_filename = fn(name: String) -> Option(String) {
-    case mimetype.filename_to_mime_type_strict(name) {
+    case mimetype.filename_to_mime_type(name) {
       Ok(value) -> Some(mimetype.to_string(value))
       Error(_) -> None
     }
   }
   let from_bytes = fn(body: BitArray) -> Option(String) {
-    case mimetype.detect_strict(body) {
+    case mimetype.detect(body) {
       Ok(value) -> Some(mimetype.to_string(value))
       Error(_) -> None
     }

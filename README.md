@@ -135,7 +135,7 @@ simplifile.write(filepath.join("./uploads", safe), bytes)
 ```gleam
 // Even better: use a content-derived id and recover the extension
 // from a magic-byte detector instead of the user-supplied filename.
-let extension = case mimetype.essence_of(detected) {
+let extension = case mimetype.essence(detected) {
   "image/png" -> "png"
   "image/jpeg" -> "jpg"
   _ -> "bin"

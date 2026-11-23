@@ -84,9 +84,9 @@ pub fn builtin_inferer() -> Inferer {
 /// builder, wire it in with `form.add_file_auto_with(form, ...,
 /// builtin_inferer())` (or build your own `Inferer`).
 pub fn content_type_from_filename(filename: String) -> Option(String) {
-  mimetype.filename_to_mime_type_strict(filename)
+  mimetype.filename_to_mime_type(filename)
   |> option.from_result
-  |> option.map(mimetype.essence_of)
+  |> option.map(mimetype.essence)
 }
 
 /// Infer a content type from a body's leading bytes (magic-number
@@ -105,7 +105,7 @@ pub fn content_type_from_filename(filename: String) -> Option(String) {
 /// `mimetype` dependency; wire it into the form builder with
 /// `form.add_file_auto_with(form, ..., builtin_inferer())`.
 pub fn content_type_from_bytes(body: BitArray) -> Option(String) {
-  mimetype.detect_strict(body)
+  mimetype.detect(body)
   |> option.from_result
-  |> option.map(mimetype.essence_of)
+  |> option.map(mimetype.essence)
 }
