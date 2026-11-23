@@ -35,9 +35,5 @@ unused_exports = "off"
   "short_variable_name",
   "thrown_away_error",
 ]
-"src/multipartkit/parser.gleam" = ["deep_nesting", "prefer_guard_clause"]
-"src/multipartkit/stream.gleam" = ["deep_nesting", "prefer_guard_clause"]
 "src/multipartkit/internal/scan.gleam" = ["deep_nesting", "prefer_guard_clause"]
 "src/multipartkit/internal/bytes.gleam" = ["prefer_guard_clause"]
-"src/multipartkit/internal/headers.gleam" = ["prefer_guard_clause"]
-"src/multipartkit/header.gleam" = ["deep_nesting"]

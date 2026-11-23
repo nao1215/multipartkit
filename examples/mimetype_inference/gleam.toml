@@ -1,7 +1,7 @@
 name = "multipartkit_mimetype_inference"
 version = "0.1.0"
 target = "erlang"
-description = "Runnable example: wire nao1215/mimetype into add_file_auto_with"
+description = "Runnable example: pick a Content-Type with infer_content_type"
 
 [dependencies]
 gleam_stdlib = ">= 0.44.0 and < 2.0.0"

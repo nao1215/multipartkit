@@ -1,7 +1,6 @@
 import gleam/option.{Some}
 import gleeunit/should
-import multipartkit/parser
-import multipartkit/part
+import multipartkit
 
 const ct = "multipart/form-data; boundary=B"
 
@@ -9,9 +8,10 @@ pub fn parse_lf_only_line_endings_test() {
   let body = <<
     "--B\nContent-Disposition: form-data; name=\"a\"\n\nhello\n--B--\n":utf8,
   >>
-  let assert Ok([field_part]) = parser.parse(body, ct)
-  part.name(field_part) |> should.equal(Some("a"))
-  part.body(field_part) |> should.equal(<<"hello":utf8>>)
+  let assert Ok([field_part]) =
+    multipartkit.parse(body, ct, multipartkit.default_limits)
+  multipartkit.name(field_part) |> should.equal(Some("a"))
+  multipartkit.body(field_part) |> should.equal(<<"hello":utf8>>)
 }
 
 pub fn parse_mixed_line_endings_test() {
@@ -19,9 +19,10 @@ pub fn parse_mixed_line_endings_test() {
   let body = <<
     "--B\r\nContent-Disposition: form-data; name=\"a\"\nContent-Type: text/plain\r\n\nhello\r\n--B--\r\n":utf8,
   >>
-  let assert Ok([field_part]) = parser.parse(body, ct)
-  part.name(field_part) |> should.equal(Some("a"))
-  part.body(field_part) |> should.equal(<<"hello":utf8>>)
+  let assert Ok([field_part]) =
+    multipartkit.parse(body, ct, multipartkit.default_limits)
+  multipartkit.name(field_part) |> should.equal(Some("a"))
+  multipartkit.body(field_part) |> should.equal(<<"hello":utf8>>)
 }
 
 pub fn parse_bare_cr_inside_body_is_preserved_test() {
@@ -30,14 +31,16 @@ pub fn parse_bare_cr_inside_body_is_preserved_test() {
     "--B\r\nContent-Disposition: form-data; name=\"file\"; filename=\"x\"\r\nContent-Type: application/octet-stream\r\n\r\nfoo":utf8,
     13, "bar\r\n--B--\r\n":utf8,
   >>
-  let assert Ok([file_part]) = parser.parse(body, ct)
-  part.body(file_part) |> should.equal(<<"foo":utf8, 13, "bar":utf8>>)
+  let assert Ok([file_part]) =
+    multipartkit.parse(body, ct, multipartkit.default_limits)
+  multipartkit.body(file_part) |> should.equal(<<"foo":utf8, 13, "bar":utf8>>)
 }
 
 pub fn parse_lf_terminated_closing_test() {
   let body = <<
     "--B\nContent-Disposition: form-data; name=\"a\"\n\nx\n--B--\n":utf8,
   >>
-  let assert Ok([field_part]) = parser.parse(body, ct)
-  part.body(field_part) |> should.equal(<<"x":utf8>>)
+  let assert Ok([field_part]) =
+    multipartkit.parse(body, ct, multipartkit.default_limits)
+  multipartkit.body(field_part) |> should.equal(<<"x":utf8>>)
 }

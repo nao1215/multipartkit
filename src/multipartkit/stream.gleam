@@ -1,39 +1,30 @@
-import gleam/bit_array
-import gleam/option.{type Option}
-import gleam/yielder.{type Yielder}
-import multipartkit/error.{
-  type MultipartError, BodyTooLarge, HeaderTooLarge, PartTooLarge, TooManyParts,
-  UnexpectedEndOfInput,
-}
-import multipartkit/header
-import multipartkit/internal/bytes
-import multipartkit/internal/headers as internal_headers
-import multipartkit/internal/scan
-import multipartkit/limit.{type Limits}
-import multipartkit/part.{type Part}
+//// Parse and encode multipart bodies a chunk at a time, for bodies too large
+//// to hold in memory.
+////
+//// A part's headers are read whole, but its body is handed out as a
+//// `Yielder` of chunks of up to 64 KiB.
 
-/// One streamed multipart part.
+import gleam/bit_array
+import gleam/bool
+import gleam/int
+import gleam/option.{type Option}
+import gleam/result
+import gleam/yielder.{type Yielder}
+import multipartkit.{
+  type Limits, type MultipartError, type Part, BodyTooLarge, HeaderTooLarge,
+  InvalidBoundary, PartTooLarge, TooManyParts, UnexpectedEndOfInput,
+}
+import multipartkit/internal/bytes
+import multipartkit/internal/headers as header_block
+import multipartkit/internal/scan
+import multipartkit/internal/text
+
+/// One part of a streamed multipart body.
 ///
-/// Opaque — inspect through `all_headers/1`, `name/1`, `filename/1`,
-/// `content_type/1`, and `body/1`. The internal layout may evolve
-/// without breaking external callers.
-///
-/// Body semantics:
-///
-/// - `body/1` returns a single-pass yielder; once consumed it cannot be
-///   replayed. Errors that arise while reading the body
-///   (`PartTooLarge`, `UnexpectedEndOfInput`, etc.) are surfaced inline
-///   as `Error(_)` items rather than swallowed.
-/// - The body yielder emits the part body in fixed-size chunks (up to
-///   ~64 KiB each) so consumers can fold over a large part without
-///   loading the whole body into a single `BitArray`. Smaller bodies
-///   fit in a single chunk. Per-part memory inside the parser is still
-///   bounded by `max_part_bytes`.
-///
-/// Note: the public spec describes `body` as `iterator.Iterator(_)`.
-/// The current implementation uses `gleam/yielder.Yielder(_)` because
-/// gleam_stdlib 1.0.0 dropped the `iterator` module.
+/// Get one from `parse` or `from_part`. The body can be read only once.
 pub opaque type StreamPart {
+  // The headers come from a parsed or validated `Part`, so `encode` can write
+  // them without checking them again.
   StreamPart(
     headers: List(#(String, String)),
     name: Option(String),
@@ -43,330 +34,333 @@ pub opaque type StreamPart {
   )
 }
 
-/// All headers as `(name, value)` pairs in input order.
-pub fn all_headers(stream_part: StreamPart) -> List(#(String, String)) {
-  stream_part.headers
-}
-
-/// The convenience `name` field derived from `Content-Disposition` for
-/// `form-data` parts, or `None`.
-pub fn name(stream_part: StreamPart) -> Option(String) {
-  stream_part.name
-}
-
-/// The convenience `filename` field derived from `Content-Disposition`
-/// for `form-data` parts, or `None`.
-pub fn filename(stream_part: StreamPart) -> Option(String) {
-  stream_part.filename
-}
-
-/// The `Content-Type` header value, or `None`.
-pub fn content_type(stream_part: StreamPart) -> Option(String) {
-  stream_part.content_type
-}
-
-/// The single-pass body yielder. See the type-level doc for streaming
-/// semantics.
-pub fn body(
-  stream_part: StreamPart,
-) -> Yielder(Result(BitArray, MultipartError)) {
-  stream_part.body
-}
-
-/// Parse a stream of input chunks using `default_limits()`.
+/// Returns every header of the part in the order it was written.
 ///
-/// The outer `Result` reports errors decidable from `content_type` alone.
-/// Each yielded item is a `Result` because once body consumption begins,
-/// failures can arise later from message structure, limits, or truncation.
-/// After the first `Error(_)` is yielded the iterator is exhausted.
-pub fn parse_stream(
-  chunks: Yielder(BitArray),
-  content_type: String,
-) -> Result(Yielder(Result(StreamPart, MultipartError)), MultipartError) {
-  parse_stream_with_limits(chunks, content_type, limit.default_limits())
+pub fn headers(part: StreamPart) -> List(#(String, String)) {
+  part.headers
 }
 
-/// Parse a stream of input chunks with caller-supplied limits.
+/// Returns the `name` parameter of a `form-data` part, as
+/// `multipartkit.name` does.
 ///
-/// Chunks are pulled lazily: bytes are consumed from `chunks` only as needed
-/// to deliver the next part's headers and body. `max_body_bytes` and
-/// `max_part_bytes` are both enforced incrementally as chunks arrive, so an
-/// oversized stream — or an oversized individual part — is rejected at the
-/// chunk that crosses the limit, not after the whole part is buffered.
-/// Per-part memory is bounded by `max_part_bytes`. Body bytes are surfaced
-/// to consumers in fixed-size chunks via `StreamPart.body` (see the
-/// `StreamPart` doc).
-pub fn parse_stream_with_limits(
+pub fn name(part: StreamPart) -> Option(String) {
+  part.name
+}
+
+/// Returns the filename of a `form-data` part, as `multipartkit.filename`
+/// does.
+///
+pub fn filename(part: StreamPart) -> Option(String) {
+  part.filename
+}
+
+/// Returns the value of the part's `Content-Type` header.
+///
+pub fn content_type(part: StreamPart) -> Option(String) {
+  part.content_type
+}
+
+/// Returns the part's body as chunks of up to 64 KiB. An empty body is one
+/// empty chunk.
+///
+/// The yielder can be run once. A read error, such as `PartTooLarge`, comes
+/// out as an `Error` item and ends it.
+///
+pub fn body(part: StreamPart) -> Yielder(Result(BitArray, MultipartError)) {
+  part.body
+}
+
+/// Parses a multipart body that arrives as chunks.
+///
+/// The outer `Result` reports a bad `content_type`, with the same errors as
+/// `multipartkit.parse`. Each item is a part or the error that stopped
+/// parsing, after which the yielder ends.
+///
+/// Chunks are pulled only when the next part is needed, and the limits are
+/// checked as they arrive, so a body or part that is too large fails at the
+/// chunk that crosses the limit. Up to one part is held in memory at a time.
+/// The results match `multipartkit.parse` however the input is split.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let assert Ok(parts) =
+///   stream.parse(chunks, content_type, multipartkit.default_limits)
+/// yielder.each(parts, fn(item) {
+///   case item {
+///     Ok(part) -> save(stream.name(part), stream.body(part))
+///     Error(error) -> log(error)
+///   }
+/// })
+/// ```
+///
+pub fn parse(
   chunks: Yielder(BitArray),
   content_type: String,
   limits: Limits,
 ) -> Result(Yielder(Result(StreamPart, MultipartError)), MultipartError) {
-  case header.boundary(content_type) {
-    Error(err) -> Error(err)
-    Ok(boundary_value) -> {
-      let pattern = scan.dash_pattern(boundary_value)
-      let initial =
-        StreamState(
-          buf: <<>>,
-          cursor: 0,
-          chunks: chunks,
-          exhausted: False,
-          bytes_pulled: 0,
-          pattern: pattern,
-          limits: limits,
-          parts_count: 0,
-          started: False,
-          done: False,
-        )
-      Ok(yielder.unfold(initial, step))
-    }
-  }
+  use boundary <- result.map(multipartkit.boundary(content_type))
+  let initial =
+    State(
+      buffer: <<>>,
+      cursor: 0,
+      chunks:,
+      bytes_pulled: 0,
+      pattern: scan.dash_pattern(boundary),
+      limits:,
+      parts_count: 0,
+      started: False,
+      done: False,
+    )
+  yielder.unfold(initial, step)
 }
 
-/// Adapter that returns the source unchanged. Exists so callers can write
-/// `source |> from_datastream` in a pipeline.
-pub fn from_datastream(source: Yielder(BitArray)) -> Yielder(BitArray) {
-  source
-}
-
-/// Adapter that returns the source unchanged. Mirror of `from_datastream`.
-pub fn to_datastream(source: Yielder(BitArray)) -> Yielder(BitArray) {
-  source
-}
-
-/// Maximum size of a single body chunk emitted by `StreamPart.body`.
+/// Encodes parts with the given boundary as a yielder of byte chunks.
 ///
-/// Chosen to match common HTTP chunk and OS page sizes. Bodies smaller
-/// than this are emitted as a single chunk; larger bodies are split
-/// into successive chunks of at most this many bytes (the last chunk
-/// may be smaller).
+/// An invalid boundary gives a single `Error(InvalidBoundary(boundary))`, as
+/// `multipartkit.encode` does. An error from a part's body is passed on and
+/// ends the yielder.
+///
+pub fn encode(
+  parts: Yielder(StreamPart),
+  boundary: String,
+) -> Yielder(Result(BitArray, MultipartError)) {
+  use <- bool.guard(
+    when: !text.is_valid_boundary(boundary),
+    return: yielder.single(Error(InvalidBoundary(boundary))),
+  )
+  let delimiter = <<"--":utf8, boundary:utf8, "\r\n":utf8>>
+  parts
+  |> yielder.flat_map(fn(part) {
+    let head = <<
+      delimiter:bits,
+      header_block.encode_block(part.headers):bits,
+      "\r\n":utf8,
+    >>
+    yielder.single(Ok(head))
+    |> yielder.append(part.body)
+    |> yielder.append(yielder.single(Ok(<<"\r\n":utf8>>)))
+  })
+  |> yielder.append(
+    yielder.single(Ok(<<"--":utf8, boundary:utf8, "--\r\n":utf8>>)),
+  )
+  |> stop_after_first_error
+}
+
+fn stop_after_first_error(
+  source: Yielder(Result(BitArray, MultipartError)),
+) -> Yielder(Result(BitArray, MultipartError)) {
+  yielder.transform(source, False, fn(seen_error, item) {
+    use <- bool.guard(when: seen_error, return: yielder.Done)
+    yielder.Next(item, result.is_error(item))
+  })
+}
+
+/// Turns a buffered part into a stream part, for example to pass it to
+/// `encode`.
+///
+pub fn from_part(part: Part) -> StreamPart {
+  StreamPart(
+    headers: multipartkit.headers(part),
+    name: multipartkit.name(part),
+    filename: multipartkit.filename(part),
+    content_type: multipartkit.content_type(part),
+    body: chunk_body(multipartkit.body(part)),
+  )
+}
+
+/// Reads a body yielder to the end and joins the chunks, stopping at the
+/// first error.
+///
+/// ## Examples
+///
+/// ```gleam
+/// stream.drain_body(stream.body(part))
+/// // -> Ok(<<"hello">>)
+/// ```
+///
+pub fn drain_body(
+  body: Yielder(Result(BitArray, MultipartError)),
+) -> Result(BitArray, MultipartError) {
+  yielder.try_fold(body, <<>>, fn(joined, chunk) {
+    result.map(chunk, bit_array.append(joined, _))
+  })
+}
+
+// Parser state ----------------------------------------------------------------
+
+/// Largest body chunk handed out by `body`.
 const body_chunk_size: Int = 65_536
 
-type StreamState {
-  StreamState(
-    buf: BitArray,
+type State {
+  State(
+    // Bytes pulled but not yet consumed, and the read position in them.
+    buffer: BitArray,
     cursor: Int,
     chunks: Yielder(BitArray),
-    exhausted: Bool,
     bytes_pulled: Int,
     pattern: BitArray,
     limits: Limits,
     parts_count: Int,
+    // Whether the first delimiter has been found, and whether the yielder
+    // has finished.
     started: Bool,
     done: Bool,
   )
 }
 
 type PullOutcome {
-  Pulled(state: StreamState)
+  Pulled(state: State)
   Exhausted
   OverBody
 }
 
 type PartOutcome {
-  PartReady(stream_part: StreamPart, state: StreamState)
+  PartReady(part: StreamPart, state: State)
   NeedMore
   Failed(error: MultipartError)
 }
 
 fn step(
-  state: StreamState,
-) -> yielder.Step(Result(StreamPart, MultipartError), StreamState) {
-  case state.done {
-    True -> yielder.Done
-    False ->
-      case state.started {
-        False -> step_find_first(state)
-        True -> step_produce_next(state)
-      }
+  state: State,
+) -> yielder.Step(Result(StreamPart, MultipartError), State) {
+  case state.done, state.started {
+    True, _ -> yielder.Done
+    False, False -> step_find_first(state)
+    False, True -> step_produce_next(state)
   }
 }
 
 fn step_find_first(
-  state: StreamState,
-) -> yielder.Step(Result(StreamPart, MultipartError), StreamState) {
-  case scan.find_delimiter(state.buf, state.pattern, 0) {
-    scan.Found(_body_end, scan.Closing, _after) -> yielder.Done
-    scan.Found(_body_end, scan.Delimiter, after_first) ->
-      step_produce_next(
-        StreamState(..state, started: True, cursor: after_first),
-      )
-    scan.Incomplete ->
-      case pull_chunk(state) {
-        Pulled(next) -> step_find_first(next)
-        Exhausted -> halt_with(state, UnexpectedEndOfInput)
-        OverBody ->
-          halt_with(state, BodyTooLarge(limit.max_body_bytes(state.limits)))
-      }
+  state: State,
+) -> yielder.Step(Result(StreamPart, MultipartError), State) {
+  case scan.find_delimiter(state.buffer, state.pattern, 0) {
+    scan.Found(_, scan.Closing, _) -> yielder.Done
+    scan.Found(_, scan.Delimiter, after_first) ->
+      step_produce_next(State(..state, started: True, cursor: after_first))
+    scan.Incomplete -> pull_then(state, step_find_first)
   }
 }
 
 fn step_produce_next(
-  state: StreamState,
-) -> yielder.Step(Result(StreamPart, MultipartError), StreamState) {
+  state: State,
+) -> yielder.Step(Result(StreamPart, MultipartError), State) {
   case parse_one_part(state) {
-    PartReady(stream_part, next) -> yielder.Next(Ok(stream_part), next)
-    Failed(err) -> halt_with(state, err)
-    NeedMore ->
-      case pull_chunk(state) {
-        Pulled(next) -> step_produce_next(next)
-        Exhausted -> halt_with(state, UnexpectedEndOfInput)
-        OverBody ->
-          halt_with(state, BodyTooLarge(limit.max_body_bytes(state.limits)))
-      }
+    PartReady(part, next) -> yielder.Next(Ok(part), next)
+    Failed(error) -> halt_with(state, error)
+    NeedMore -> pull_then(state, step_produce_next)
+  }
+}
+
+fn pull_then(
+  state: State,
+  continue: fn(State) -> yielder.Step(Result(StreamPart, MultipartError), State),
+) -> yielder.Step(Result(StreamPart, MultipartError), State) {
+  case pull_chunk(state) {
+    Pulled(next) -> continue(next)
+    Exhausted -> halt_with(state, UnexpectedEndOfInput)
+    OverBody -> halt_with(state, BodyTooLarge(state.limits.max_body_bytes))
   }
 }
 
 fn halt_with(
-  state: StreamState,
-  err: MultipartError,
-) -> yielder.Step(Result(StreamPart, MultipartError), StreamState) {
-  yielder.Next(Error(err), StreamState(..state, done: True))
+  state: State,
+  error: MultipartError,
+) -> yielder.Step(Result(StreamPart, MultipartError), State) {
+  yielder.Next(Error(error), State(..state, done: True))
 }
 
-fn pull_chunk(state: StreamState) -> PullOutcome {
-  case state.exhausted {
-    True -> Exhausted
-    False ->
-      case yielder.step(state.chunks) {
-        yielder.Done -> Exhausted
-        yielder.Next(chunk, rest) -> {
-          let size = bit_array.byte_size(chunk)
-          let new_pulled = state.bytes_pulled + size
-          case new_pulled > limit.max_body_bytes(state.limits) {
-            True -> OverBody
-            False ->
-              Pulled(
-                StreamState(
-                  ..state,
-                  buf: bit_array.append(state.buf, chunk),
-                  bytes_pulled: new_pulled,
-                  chunks: rest,
-                ),
-              )
-          }
-        }
-      }
-  }
-}
-
-fn parse_one_part(state: StreamState) -> PartOutcome {
-  case bytes.find_blank_line(state.buf, state.cursor) {
-    Error(Nil) -> NeedMore
-    Ok(#(blank_at, body_start)) -> finalise_headers(state, blank_at, body_start)
-  }
-}
-
-fn finalise_headers(
-  state: StreamState,
-  blank_at: Int,
-  body_start: Int,
-) -> PartOutcome {
-  let header_block_size = body_start - state.cursor
-  case header_block_size > limit.max_header_bytes(state.limits) {
-    True -> Failed(HeaderTooLarge(limit.max_header_bytes(state.limits)))
-    False -> {
-      let header_block =
-        bytes.slice_or_empty(state.buf, state.cursor, blank_at - state.cursor)
-      case internal_headers.parse_block(header_block) {
-        Error(err) -> Failed(err)
-        Ok(header_list) ->
-          case internal_headers.derive_meta(header_list) {
-            Error(err) -> Failed(err)
-            Ok(meta) -> finalise_body(state, body_start, header_list, meta)
-          }
+fn pull_chunk(state: State) -> PullOutcome {
+  case yielder.step(state.chunks) {
+    yielder.Done -> Exhausted
+    yielder.Next(chunk, rest) -> {
+      let pulled = state.bytes_pulled + bit_array.byte_size(chunk)
+      case pulled > state.limits.max_body_bytes {
+        True -> OverBody
+        False ->
+          Pulled(
+            State(
+              ..state,
+              buffer: bit_array.append(state.buffer, chunk),
+              bytes_pulled: pulled,
+              chunks: rest,
+            ),
+          )
       }
     }
   }
 }
 
-fn finalise_body(
-  state: StreamState,
-  body_start: Int,
-  header_list: List(#(String, String)),
-  meta: internal_headers.DerivedMeta,
-) -> PartOutcome {
-  case scan.find_delimiter(state.buf, state.pattern, body_start) {
-    scan.Found(body_end_excl, kind, after_delim) ->
-      finalise_part(
-        state,
-        body_start,
-        body_end_excl,
-        kind,
-        after_delim,
-        header_list,
-        meta,
+fn parse_one_part(state: State) -> PartOutcome {
+  case bytes.find_blank_line(state.buffer, state.cursor) {
+    Error(Nil) -> NeedMore
+    Ok(#(blank_at, body_start)) -> {
+      let limit = state.limits.max_header_bytes
+      use <- bool.guard(
+        when: body_start - state.cursor > limit,
+        return: Failed(HeaderTooLarge(limit)),
       )
+      let block =
+        bytes.slice_or_empty(
+          state.buffer,
+          state.cursor,
+          blank_at - state.cursor,
+        )
+      case multipartkit.parse_part_headers(block) {
+        Error(error) -> Failed(error)
+        Ok(head) -> parse_body(state, body_start, head)
+      }
+    }
+  }
+}
+
+fn parse_body(state: State, body_start: Int, head: Part) -> PartOutcome {
+  let limit = state.limits.max_part_bytes
+  case scan.find_delimiter(state.buffer, state.pattern, body_start) {
+    scan.Found(body_end, kind, after) -> {
+      let size = body_end - body_start
+      use <- bool.guard(when: size > limit, return: Failed(PartTooLarge(limit)))
+      let parts_count = state.parts_count + 1
+      use <- bool.guard(
+        when: parts_count > state.limits.max_parts,
+        return: Failed(TooManyParts(state.limits.max_parts)),
+      )
+      let part =
+        StreamPart(
+          ..from_part(head),
+          body: chunk_body(bytes.slice_or_empty(state.buffer, body_start, size)),
+        )
+      let next = State(..state, cursor: after, parts_count:)
+      case kind {
+        scan.Delimiter -> PartReady(part, compact_buffer(next))
+        // The epilogue after the closing delimiter is ignored, but it still
+        // counts against max_body_bytes, as in multipartkit.parse, so the
+        // result does not depend on how the input was split.
+        scan.Closing ->
+          case drain_epilogue(next.chunks, next.bytes_pulled, next.limits) {
+            Error(error) -> Failed(error)
+            Ok(Nil) ->
+              PartReady(
+                part,
+                State(..next, buffer: <<>>, cursor: 0, done: True),
+              )
+          }
+      }
+    }
     scan.Incomplete -> {
-      let max = limit.max_part_bytes(state.limits)
-      let buf_size = bit_array.byte_size(state.buf)
-      // The next delimiter starts with `\r\n--` plus the boundary token; even
-      // accounting for a partial delimiter at the tail of `buf`, any bytes in
-      // [body_start, buf_size - safety) are confirmed body bytes, so if that
-      // lower bound already exceeds `max_part_bytes` we can fail right now
-      // without pulling more chunks.
+      // Everything before the last `pattern + 4` bytes is body: the next
+      // delimiter is CRLF, `--` and the boundary. So fail as soon as that
+      // much is over the limit, without pulling more chunks.
       let safety = bit_array.byte_size(state.pattern) + 4
-      let confirmed_body_size = buf_size - body_start - safety
-      case confirmed_body_size > max {
-        True -> Failed(PartTooLarge(max))
+      let confirmed = bit_array.byte_size(state.buffer) - body_start - safety
+      case confirmed > limit {
+        True -> Failed(PartTooLarge(limit))
         False -> NeedMore
       }
     }
   }
 }
 
-fn finalise_part(
-  state: StreamState,
-  body_start: Int,
-  body_end_excl: Int,
-  kind: scan.DelimKind,
-  after_delim: Int,
-  header_list: List(#(String, String)),
-  meta: internal_headers.DerivedMeta,
-) -> PartOutcome {
-  let body_size = body_end_excl - body_start
-  case body_size > limit.max_part_bytes(state.limits) {
-    True -> Failed(PartTooLarge(limit.max_part_bytes(state.limits)))
-    False -> {
-      let new_count = state.parts_count + 1
-      case new_count > limit.max_parts(state.limits) {
-        True -> Failed(TooManyParts(limit.max_parts(state.limits)))
-        False -> {
-          let part_body = bytes.slice_or_empty(state.buf, body_start, body_size)
-          let stream_part =
-            StreamPart(
-              headers: header_list,
-              name: meta.name,
-              filename: meta.filename,
-              content_type: meta.content_type,
-              body: chunk_body(part_body, body_chunk_size),
-            )
-          let next =
-            StreamState(..state, cursor: after_delim, parts_count: new_count)
-          case kind {
-            scan.Delimiter -> PartReady(stream_part, compact_buffer(next))
-            scan.Closing ->
-              // The epilogue after the closing delimiter is ignored, but it
-              // is still input: count it against `max_body_bytes` as
-              // `parse_with_limits` does, so the outcome does not depend on
-              // whether it arrived in the same chunk as the delimiter.
-              case drain_epilogue(next.chunks, next.bytes_pulled, next.limits) {
-                Error(err) -> Failed(err)
-                Ok(Nil) ->
-                  PartReady(
-                    stream_part,
-                    StreamState(..next, buf: <<>>, cursor: 0, done: True),
-                  )
-              }
-          }
-        }
-      }
-    }
-  }
-}
-
-/// Internal: pull the chunks left after the closing delimiter without
-/// keeping them, failing once the total input exceeds `max_body_bytes`.
 fn drain_epilogue(
   chunks: Yielder(BitArray),
   pulled: Int,
@@ -376,90 +370,37 @@ fn drain_epilogue(
     yielder.Done -> Ok(Nil)
     yielder.Next(chunk, rest) -> {
       let pulled = pulled + bit_array.byte_size(chunk)
-      case pulled > limit.max_body_bytes(limits) {
-        True -> Error(BodyTooLarge(limit.max_body_bytes(limits)))
+      case pulled > limits.max_body_bytes {
+        True -> Error(BodyTooLarge(limits.max_body_bytes))
         False -> drain_epilogue(rest, pulled, limits)
       }
     }
   }
 }
 
-/// Internal: drop already-consumed bytes from the front of `buf` so memory
-/// is bounded by the current part rather than the entire input.
-fn compact_buffer(state: StreamState) -> StreamState {
+/// Drops the consumed bytes from the front of the buffer, so memory is
+/// bounded by the current part.
+fn compact_buffer(state: State) -> State {
   case state.cursor {
     0 -> state
-    _ -> {
-      let remaining = bytes.drop(state.buf, state.cursor)
-      StreamState(..state, buf: remaining, cursor: 0)
-    }
+    cursor ->
+      State(..state, buffer: bytes.drop(state.buffer, cursor), cursor: 0)
   }
 }
 
-/// Build a `StreamPart` from a fully buffered `Part`.
-///
-/// Useful when feeding parts into `encode_stream` or when adapting a
-/// buffered parse result into the streaming API surface. The resulting
-/// body yielder emits the buffered bytes in chunks of up to
-/// `body_chunk_size`, matching the behaviour of `parse_stream`.
-pub fn from_part(the_part: Part) -> StreamPart {
-  StreamPart(
-    headers: part.all_headers(the_part),
-    name: part.name(the_part),
-    filename: part.filename(the_part),
-    content_type: part.content_type(the_part),
-    body: chunk_body(part.body(the_part), body_chunk_size),
-  )
-}
-
-/// Consume a `StreamPart`'s body yielder and return the concatenated bytes.
-///
-/// Stops at the first `Error(_)` and returns it. The body yielder may
-/// emit multiple `Ok(BitArray)` items for large parts; this helper folds
-/// them into a single `BitArray` for callers that only need the full
-/// body in memory.
-pub fn drain_body(
-  source: Yielder(Result(BitArray, MultipartError)),
-) -> Result(BitArray, MultipartError) {
-  drain_loop(source, <<>>)
-}
-
-/// Internal: split a fully buffered body into a yielder of fixed-size
-/// chunks of at most `chunk_size` bytes each. The last chunk may be
-/// smaller. An empty body still emits one empty chunk so that callers
-/// that fold over `Ok(_)` items see at least one body item per part.
-fn chunk_body(
-  body: BitArray,
-  chunk_size: Int,
-) -> Yielder(Result(BitArray, MultipartError)) {
+fn chunk_body(body: BitArray) -> Yielder(Result(BitArray, MultipartError)) {
   let total = bit_array.byte_size(body)
-  case total {
-    0 -> yielder.from_list([Ok(<<>>)])
-    _ ->
-      yielder.unfold(0, fn(offset) {
-        case offset >= total {
-          True -> yielder.Done
-          False -> {
-            let take = case offset + chunk_size > total {
-              True -> total - offset
-              False -> chunk_size
-            }
-            let chunk = bytes.slice_or_empty(body, offset, take)
-            yielder.Next(Ok(chunk), offset + take)
-          }
-        }
-      })
-  }
-}
-
-fn drain_loop(
-  source: Yielder(Result(BitArray, MultipartError)),
-  acc: BitArray,
-) -> Result(BitArray, MultipartError) {
-  case yielder.step(source) {
-    yielder.Done -> Ok(acc)
-    yielder.Next(Ok(chunk), rest) ->
-      drain_loop(rest, bit_array.append(acc, chunk))
-    yielder.Next(Error(err), _) -> Error(err)
-  }
+  use <- bool.guard(when: total == 0, return: yielder.single(Ok(<<>>)))
+  yielder.unfold(0, fn(offset) {
+    case offset >= total {
+      True -> yielder.Done
+      False -> {
+        let take = int.min(body_chunk_size, total - offset)
+        yielder.Next(
+          Ok(bytes.slice_or_empty(body, offset, take)),
+          offset + take,
+        )
+      }
+    }
+  })
 }

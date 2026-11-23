@@ -1,5 +1,5 @@
 //// RFC 5987 / RFC 6266 §4.3 conformance for the encoder side of
-//// `form.add_file`. When the filename contains bytes outside the
+//// `multipartkit.new_file`. When the filename contains bytes outside the
 //// printable US-ASCII range, the encoder must emit BOTH the legacy
 //// `filename="<ascii-fallback>"` form AND the RFC 5987 `filename*=`
 //// form so the wire stays valid under RFC 7230 §3.2.4 and is still
@@ -10,10 +10,7 @@ import gleam/option.{Some}
 import gleam/string
 import gleeunit/should
 import multipartkit
-import multipartkit/encoder
-import multipartkit/form
-import multipartkit/parser
-import multipartkit/part
+import support
 
 // ---------------------------------------------------------------
 // ASCII-only filename: behaviour MUST be unchanged from before this
@@ -23,9 +20,9 @@ import multipartkit/part
 
 pub fn ascii_filename_keeps_legacy_form_only_test() {
   let f =
-    form.new()
-    |> form.add_file("file", "doc.pdf", "application/pdf", <<"PDF":utf8>>)
-  let assert Ok(body) = encoder.encode("bnd", form.parts(f))
+    []
+    |> support.add_file("file", "doc.pdf", "application/pdf", <<"PDF":utf8>>)
+  let assert Ok(body) = multipartkit.encode(f, "bnd")
   let assert Ok(body_str) = bit_array.to_string(body)
   string.contains(body_str, "filename=\"doc.pdf\"")
   |> should.be_true
@@ -43,9 +40,9 @@ pub fn ascii_filename_keeps_legacy_form_only_test() {
 
 pub fn cjk_filename_emits_both_legacy_and_rfc5987_test() {
   let f =
-    form.new()
-    |> form.add_file("file", "写真.png", "image/png", <<"ASCII":utf8>>)
-  let assert Ok(body) = encoder.encode("bnd", form.parts(f))
+    []
+    |> support.add_file("file", "写真.png", "image/png", <<"ASCII":utf8>>)
+  let assert Ok(body) = multipartkit.encode(f, "bnd")
   let assert Ok(body_str) = bit_array.to_string(body)
   // Must NOT contain the raw CJK bytes inside the header any more.
   string.contains(body_str, "filename=\"写真.png\"")
@@ -61,16 +58,17 @@ pub fn cjk_filename_emits_both_legacy_and_rfc5987_test() {
 // ---------------------------------------------------------------
 // Round-trip: encoder emits both forms, parser prefers `filename*=`
 // per RFC 5987 §3.2.2 (and per multipartkit's own
-// content_disposition.parse doc-comment).
+// parse_content_disposition doc comment).
 // ---------------------------------------------------------------
 
 pub fn cjk_filename_round_trips_via_rfc5987_test() {
   let f =
-    form.new()
-    |> form.add_file("file", "写真.png", "image/png", <<"ASCII":utf8>>)
+    []
+    |> support.add_file("file", "写真.png", "image/png", <<"ASCII":utf8>>)
   let #(ct, body) = multipartkit.encode_form(f)
-  let assert Ok([the_part]) = parser.parse(body, ct)
-  part.filename(the_part) |> should.equal(Some("写真.png"))
+  let assert Ok([the_part]) =
+    multipartkit.parse(body, ct, multipartkit.default_limits)
+  multipartkit.filename(the_part) |> should.equal(Some("写真.png"))
 }
 
 // ---------------------------------------------------------------
@@ -82,9 +80,9 @@ pub fn cjk_filename_round_trips_via_rfc5987_test() {
 
 pub fn latin_supplement_filename_emits_rfc5987_test() {
   let f =
-    form.new()
-    |> form.add_file("file", "Naïve.txt", "text/plain", <<"x":utf8>>)
-  let assert Ok(body) = encoder.encode("bnd", form.parts(f))
+    []
+    |> support.add_file("file", "Naïve.txt", "text/plain", <<"x":utf8>>)
+  let assert Ok(body) = multipartkit.encode(f, "bnd")
   let assert Ok(body_str) = bit_array.to_string(body)
   string.contains(body_str, "filename*=UTF-8''Na%C3%AFve.txt")
   |> should.be_true
@@ -95,11 +93,12 @@ pub fn latin_supplement_filename_emits_rfc5987_test() {
 
 pub fn latin_filename_round_trips_test() {
   let f =
-    form.new()
-    |> form.add_file("file", "Naïve.txt", "text/plain", <<"x":utf8>>)
+    []
+    |> support.add_file("file", "Naïve.txt", "text/plain", <<"x":utf8>>)
   let #(ct, body) = multipartkit.encode_form(f)
-  let assert Ok([the_part]) = parser.parse(body, ct)
-  part.filename(the_part) |> should.equal(Some("Naïve.txt"))
+  let assert Ok([the_part]) =
+    multipartkit.parse(body, ct, multipartkit.default_limits)
+  multipartkit.filename(the_part) |> should.equal(Some("Naïve.txt"))
 }
 
 // ---------------------------------------------------------------
@@ -109,11 +108,12 @@ pub fn latin_filename_round_trips_test() {
 
 pub fn emoji_filename_round_trips_test() {
   let f =
-    form.new()
-    |> form.add_file("file", "globe🌏.png", "image/png", <<"x":utf8>>)
+    []
+    |> support.add_file("file", "globe🌏.png", "image/png", <<"x":utf8>>)
   let #(ct, body) = multipartkit.encode_form(f)
-  let assert Ok([the_part]) = parser.parse(body, ct)
-  part.filename(the_part) |> should.equal(Some("globe🌏.png"))
+  let assert Ok([the_part]) =
+    multipartkit.parse(body, ct, multipartkit.default_limits)
+  multipartkit.filename(the_part) |> should.equal(Some("globe🌏.png"))
 }
 
 // ---------------------------------------------------------------
@@ -124,9 +124,9 @@ pub fn emoji_filename_round_trips_test() {
 
 pub fn ascii_filename_with_quote_keeps_legacy_only_test() {
   let f =
-    form.new()
-    |> form.add_file("file", "a\"b.txt", "text/plain", <<"x":utf8>>)
-  let assert Ok(body) = encoder.encode("bnd", form.parts(f))
+    []
+    |> support.add_file("file", "a\"b.txt", "text/plain", <<"x":utf8>>)
+  let assert Ok(body) = multipartkit.encode(f, "bnd")
   let assert Ok(body_str) = bit_array.to_string(body)
   string.contains(body_str, "filename=\"a\\\"b.txt\"")
   |> should.be_true
@@ -134,6 +134,7 @@ pub fn ascii_filename_with_quote_keeps_legacy_only_test() {
   |> should.be_false
   // And it still round-trips:
   let #(ct, body2) = multipartkit.encode_form(f)
-  let assert Ok([p]) = parser.parse(body2, ct)
-  part.filename(p) |> should.equal(Some("a\"b.txt"))
+  let assert Ok([p]) =
+    multipartkit.parse(body2, ct, multipartkit.default_limits)
+  multipartkit.filename(p) |> should.equal(Some("a\"b.txt"))
 }

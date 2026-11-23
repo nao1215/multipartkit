@@ -1,5 +1,5 @@
 //// Differential tests: the buffered parser (`multipartkit.parse`) and the
-//// streaming parser (`multipartkit.parse_stream`) implement the same
+//// streaming parser (`multipartkit/stream.parse`) implement the same
 //// grammar with different code. For any input, however it is cut into
 //// chunks, both must accept the same messages, return the same parts and
 //// reject the same malformed or oversized input.
@@ -10,12 +10,9 @@ import gleam/yielder
 import metamon
 import metamon/generator.{type Generator}
 import metamon/generator/range
-import multipartkit
-import multipartkit/error.{type MultipartError}
-import multipartkit/form
-import multipartkit/limit
-import multipartkit/part
+import multipartkit.{type MultipartError}
 import multipartkit/stream
+import support
 
 type Entry {
   Field(name: String, value: String)
@@ -70,11 +67,11 @@ fn entry_gen() -> Generator(Entry) {
 
 fn build(entries: List(Entry)) -> #(String, BitArray) {
   entries
-  |> list.fold(form.new(), fn(acc, entry) {
+  |> list.fold([], fn(acc, entry) {
     case entry {
-      Field(name, value) -> form.add_field(acc, name, value)
+      Field(name, value) -> support.add_field(acc, name, value)
       File(name, filename, ct, body) ->
-        form.add_file(acc, name, filename, ct, body)
+        support.add_file(acc, name, filename, ct, body)
     }
   })
   |> multipartkit.encode_form
@@ -113,27 +110,25 @@ type Seen =
 fn buffered(
   body: BitArray,
   content_type: String,
-  limits: limit.Limits,
+  limits: multipartkit.Limits,
 ) -> Result(Seen, MultipartError) {
-  case multipartkit.parse_with_limits(body, content_type, limits) {
+  case multipartkit.parse(body, content_type, limits) {
     Error(e) -> Error(e)
     Ok(parts) ->
-      Ok(list.map(parts, fn(p) { #(part.all_headers(p), part.body(p)) }))
+      Ok(
+        list.map(parts, fn(p) {
+          #(multipartkit.headers(p), multipartkit.body(p))
+        }),
+      )
   }
 }
 
 fn streamed(
   chunks: List(BitArray),
   content_type: String,
-  limits: limit.Limits,
+  limits: multipartkit.Limits,
 ) -> Result(Seen, MultipartError) {
-  case
-    multipartkit.parse_stream_with_limits(
-      yielder.from_list(chunks),
-      content_type,
-      limits,
-    )
-  {
+  case stream.parse(yielder.from_list(chunks), content_type, limits) {
     Error(e) -> Error(e)
     Ok(parts) -> collect(parts, [])
   }
@@ -149,7 +144,7 @@ fn collect(
     yielder.Next(Ok(sp), rest) ->
       case stream.drain_body(stream.body(sp)) {
         Error(e) -> Error(e)
-        Ok(body) -> collect(rest, [#(stream.all_headers(sp), body), ..acc])
+        Ok(body) -> collect(rest, [#(stream.headers(sp), body), ..acc])
       }
   }
 }
@@ -167,7 +162,7 @@ pub fn stream_matches_buffered_for_encoded_forms_test() -> Nil {
     fn(input) {
       let #(entries, sizes) = input
       let #(content_type, body) = build(entries)
-      let limits = limit.default_limits()
+      let limits = multipartkit.default_limits
       let expected = buffered(body, content_type, limits)
       let assert Ok(_) = expected
       streamed(chunk(body, sizes), content_type, limits) == expected
@@ -203,7 +198,7 @@ pub fn stream_matches_buffered_for_damaged_messages_test() -> Nil {
         0 -> bit_array.concat([head, <<byte>>, tail])
         _ -> bit_array.append(head, tail)
       }
-      let limits = limit.default_limits()
+      let limits = multipartkit.default_limits
       streamed(chunk(damaged, sizes), content_type, limits)
       == buffered(damaged, content_type, limits)
     },
@@ -226,7 +221,8 @@ pub fn stream_matches_buffered_at_limit_boundaries_test() -> Nil {
     fn(input) {
       let #(entries, sizes, #(which, delta)) = input
       let #(content_type, body) = build(entries)
-      let assert Ok(seen) = buffered(body, content_type, limit.default_limits())
+      let assert Ok(seen) =
+        buffered(body, content_type, multipartkit.default_limits)
       let largest_part =
         list.fold(seen, 0, fn(acc, p) {
           let n = bit_array.byte_size(p.1)
@@ -235,12 +231,12 @@ pub fn stream_matches_buffered_at_limit_boundaries_test() -> Nil {
             False -> acc
           }
         })
-      let d = limit.default_limits()
+      let d = multipartkit.default_limits
       let #(b, p, n, h) = #(
-        limit.max_body_bytes(d),
-        limit.max_part_bytes(d),
-        limit.max_parts(d),
-        limit.max_header_bytes(d),
+        d.max_body_bytes,
+        d.max_part_bytes,
+        d.max_parts,
+        d.max_header_bytes,
       )
       let at = fn(x) {
         case x + delta < 1 {
@@ -249,10 +245,11 @@ pub fn stream_matches_buffered_at_limit_boundaries_test() -> Nil {
         }
       }
       let limits = case which {
-        "body" -> limit.new(at(bit_array.byte_size(body)), p, n, h)
-        "part" -> limit.new(b, at(largest_part), n, h)
-        "parts" -> limit.new(b, p, at(list.length(seen)), h)
-        _ -> limit.new(b, p, n, at(header_size(seen)))
+        "body" ->
+          Ok(multipartkit.Limits(at(bit_array.byte_size(body)), p, n, h))
+        "part" -> Ok(multipartkit.Limits(b, at(largest_part), n, h))
+        "parts" -> Ok(multipartkit.Limits(b, p, at(list.length(seen)), h))
+        _ -> Ok(multipartkit.Limits(b, p, n, at(header_size(seen))))
       }
       let assert Ok(limits) = limits
       streamed(chunk(body, sizes), content_type, limits)
