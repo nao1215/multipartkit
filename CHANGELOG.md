@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `parse` and `stream.parse` report a header line that is not UTF-8, such as a Shift_JIS or Latin-1 filename, as `InvalidHeader(line:)` holding that line with each invalid byte sequence replaced by U+FFFD. Before, the error held `""` for the whole block, so the caller could not tell which header was bad, and an earlier line with another problem was not reported.
+
 ## [0.18.0] - 2026-11-23
 
 ### Changed

@@ -15,23 +15,25 @@ import multipartkit/internal/text
 /// is joined to it without the line break (RFC 5322 §2.2.3). Fails with
 /// `invalid(line)` for the first line that has no `:`, has a name that
 /// `is_valid_name` rejects, holds CR or NUL, or continues a line that does
-/// not exist, and with `invalid("")` when the block is not UTF-8. The
-/// caller passes its own error constructor, so this module needs no error
-/// type of its own.
+/// not exist, or is not UTF-8. A line that is not UTF-8 is passed to
+/// `invalid` with each bad byte sequence replaced by U+FFFD. The caller
+/// passes its own error constructor, so this module needs no error type of
+/// its own.
 pub fn parse_block(
   block: BitArray,
   invalid: fn(String) -> error,
 ) -> Result(List(#(String, String)), error) {
-  use _ <- result.try(
-    bit_array.to_string(block) |> result.replace_error(invalid("")),
-  )
   // Split on bytes: on Erlang `string.split` keeps a CR LF pair together as
   // one grapheme, so a bare CR before a CR LF would hide the line break.
   split_lines(block, 0, [])
-  |> list.try_fold([], fn(headers, line) {
-    case add_line(headers, line) {
-      Ok(headers) -> Ok(headers)
-      Error(Nil) -> Error(invalid(line))
+  |> list.try_fold([], fn(headers, raw) {
+    case bit_array.to_string(raw) {
+      Error(Nil) -> Error(invalid(replace_invalid_utf8(raw, [])))
+      Ok(line) ->
+        case add_line(headers, line) {
+          Ok(headers) -> Ok(headers)
+          Error(Nil) -> Error(invalid(line))
+        }
     }
   })
   |> result.map(fn(headers) {
@@ -43,13 +45,13 @@ pub fn parse_block(
 fn split_lines(
   block: BitArray,
   from: Int,
-  lines: List(String),
-) -> List(String) {
+  lines: List(BitArray),
+) -> List(BitArray) {
   case bytes.find_index(block, <<"\n":utf8>>, from) {
     Error(Nil) ->
       case bytes.drop(block, from) {
         <<>> -> list.reverse(lines)
-        last -> list.reverse([line_text(last), ..lines])
+        last -> list.reverse([last, ..lines])
       }
     Ok(at) -> {
       let line = bytes.slice_or_empty(block, from, at - from)
@@ -57,14 +59,64 @@ fn split_lines(
         True -> bytes.slice_or_empty(line, 0, bit_array.byte_size(line) - 1)
         False -> line
       }
-      split_lines(block, at + 1, [line_text(line), ..lines])
+      split_lines(block, at + 1, [line, ..lines])
     }
   }
 }
 
-fn line_text(line: BitArray) -> String {
-  // The block is UTF-8 and lines are cut at ASCII bytes, so this succeeds.
-  result.unwrap(bit_array.to_string(line), "")
+/// Decode `line` as UTF-8, replacing each maximal invalid subpart with
+/// U+FFFD as the WHATWG decoder and Unicode §3.9 do.
+fn replace_invalid_utf8(line: BitArray, chunks: List(BitArray)) -> String {
+  case line {
+    <<lead, rest:bytes>> -> {
+      let #(size, valid) = sequence(lead, rest)
+      let chunk = case valid {
+        True -> bytes.slice_or_empty(line, 0, size)
+        False -> <<"\u{FFFD}":utf8>>
+      }
+      replace_invalid_utf8(bytes.drop(line, size), [chunk, ..chunks])
+    }
+    _ ->
+      list.reverse(chunks)
+      |> bit_array.concat
+      |> bit_array.to_string
+      |> result.unwrap("")
+  }
+}
+
+/// The length of the sequence that starts with `lead`, and whether it is
+/// complete. An incomplete one covers the lead byte and the continuation
+/// bytes that could still follow it.
+fn sequence(lead: Int, rest: BitArray) -> #(Int, Bool) {
+  case lead {
+    _ if lead < 0x80 -> #(1, True)
+    _ if lead >= 0xC2 && lead <= 0xDF -> continuation(rest, 1, 0x80, 0xBF, 1)
+    0xE0 -> continuation(rest, 2, 0xA0, 0xBF, 1)
+    0xED -> continuation(rest, 2, 0x80, 0x9F, 1)
+    _ if lead >= 0xE1 && lead <= 0xEF -> continuation(rest, 2, 0x80, 0xBF, 1)
+    0xF0 -> continuation(rest, 3, 0x90, 0xBF, 1)
+    0xF4 -> continuation(rest, 3, 0x80, 0x8F, 1)
+    _ if lead >= 0xF1 && lead <= 0xF3 -> continuation(rest, 3, 0x80, 0xBF, 1)
+    _ -> #(1, False)
+  }
+}
+
+/// Take up to `needed` continuation bytes from `rest`, the first in
+/// `low..high` and the others in `0x80..0xBF`. `size` counts the bytes
+/// taken so far, starting with the lead byte.
+fn continuation(
+  rest: BitArray,
+  needed: Int,
+  low: Int,
+  high: Int,
+  size: Int,
+) -> #(Int, Bool) {
+  case needed, rest {
+    0, _ -> #(size, True)
+    _, <<byte, tail:bytes>> if byte >= low && byte <= high ->
+      continuation(tail, needed - 1, 0x80, 0xBF, size + 1)
+    _, _ -> #(size, False)
+  }
 }
 
 fn add_line(
