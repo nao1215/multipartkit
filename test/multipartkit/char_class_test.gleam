@@ -4,6 +4,7 @@
 
 import gleam/list
 import gleam/option.{None, Some}
+import gleam/result
 import gleam/string
 import gleeunit/should
 import multipartkit
@@ -30,8 +31,9 @@ fn is_attr_char(code: Int) -> Bool {
 
 pub fn ext_value_accepts_exactly_attr_chars_test() {
   // RFC 5987 §3.2.1 value-chars := *( pct-encoded / attr-char ). The value
-  // is quoted so that the token rules do not decide first.
-  ascii()
+  // is quoted so that the token rules do not decide first. A character
+  // outside ASCII is not an attr-char either.
+  [0x00E9, 0x3042, ..ascii()]
   |> list.each(fn(code) {
     let escaped = case code {
       0x22 -> "\\\""
@@ -76,6 +78,41 @@ pub fn quoted_pair_accepts_exactly_htab_sp_vchar_and_obs_text_test() {
       Error(_), False -> Nil
       _, _ -> should.equal(#(code, valid), #(code, !valid))
     }
+  })
+}
+
+/// RFC 7230 §3.2.6 tchar: "!" / "#" / "$" / "%" / "&" / "'" / "*" / "+" /
+/// "-" / "." / "^" / "_" / "`" / "|" / "~" / DIGIT / ALPHA.
+pub fn unquoted_parameter_value_accepts_exactly_tchars_test() {
+  ascii()
+  |> list.each(fn(code) {
+    let tchar =
+      { code >= 0x41 && code <= 0x5A }
+      || { code >= 0x61 && code <= 0x7A }
+      || { code >= 0x30 && code <= 0x39 }
+      || string.contains("!#$%&'*+-.^_`|~", char(code))
+    let value = "a" <> char(code) <> "b"
+    let name = case
+      multipartkit.parse_content_disposition("form-data; name=" <> value)
+    {
+      Ok(parsed) -> parsed.name
+      Error(_) -> None
+    }
+    assert #(code, name == Some(value)) == #(code, tchar)
+  })
+}
+
+/// RFC 5322 §3.6.8 ftext: printable ASCII other than ":".
+pub fn header_name_accepts_exactly_ftext_test() {
+  [0x00E9, ..ascii()]
+  |> list.each(fn(code) {
+    let ftext = code >= 33 && code <= 126 && code != 58
+    let accepted =
+      multipartkit.new_part(
+        headers: [#("X" <> char(code) <> "Y", "v")],
+        body: <<>>,
+      )
+    assert #(code, accepted |> result.is_ok) == #(code, ftext)
   })
 }
 

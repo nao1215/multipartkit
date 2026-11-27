@@ -1,6 +1,11 @@
 import gleam/bit_array
+import gleam/list
+import gleam/option.{Some}
+import gleam/result
+import gleam/yielder
 import gleeunit/should
 import multipartkit.{BodyTooLarge, HeaderTooLarge, PartTooLarge, TooManyParts}
+import multipartkit/stream
 
 const ct = "multipart/form-data; boundary=B"
 
@@ -124,6 +129,16 @@ pub fn limit_includes_blank_line_terminator_test() {
     )
   multipartkit.parse(body, ct, strict)
   |> should.equal(Error(HeaderTooLarge(43)))
+  // stream.parse draws the same line.
+  assert stream_names(body, limits) == [Ok(Some("a"))]
+  assert stream_names(body, strict) == [Error(HeaderTooLarge(43))]
+}
+
+fn stream_names(body: BitArray, limits: multipartkit.Limits) {
+  let assert Ok(parts) = stream.parse(yielder.single(body), ct, limits)
+  parts
+  |> yielder.to_list
+  |> list.map(result.map(_, stream.name))
 }
 
 pub fn zero_limit_rejects_any_part_test() {
