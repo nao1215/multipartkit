@@ -111,6 +111,87 @@ pub fn nul_in_a_header_line_is_rejected_test() {
   assert parse(body) == Error(InvalidHeader(line))
 }
 
+// RFC 7578 §5.1.3 lets a form send names and filenames in a charset other
+// than UTF-8. Such a header is rejected, but the error names the line,
+// with each byte sequence that is not UTF-8 shown as U+FFFD.
+
+pub fn shift_jis_filename_names_the_line_test() {
+  // "テスト" in Shift_JIS: 0x83 is not a UTF-8 lead byte.
+  let body = <<
+    "--b\r\nContent-Disposition: form-data; name=\"f\"; filename=\"", 0x83, 0x65,
+    0x83, 0x58, 0x83, 0x67, ".txt\"\r\n\r\nx\r\n--b--",
+  >>
+  let line =
+    "Content-Disposition: form-data; name=\"f\"; filename=\"\u{FFFD}e\u{FFFD}X\u{FFFD}g.txt\""
+  assert parse(body) == Error(InvalidHeader(line))
+  assert stream_parse(body) == Error(InvalidHeader(line))
+}
+
+pub fn latin1_byte_in_the_last_header_line_with_lf_names_the_line_test() {
+  // "café" in Latin-1: 0xE9 starts a three-byte sequence that never comes.
+  let body = <<
+    "--b\nContent-Disposition: form-data; name=\"f\"\nContent-Type: text/plain; charset=caf",
+    0xE9, "\n\nx\n--b--",
+  >>
+  let line = "Content-Type: text/plain; charset=caf\u{FFFD}"
+  assert parse(body) == Error(InvalidHeader(line))
+  assert stream_parse(body) == Error(InvalidHeader(line))
+}
+
+pub fn non_utf8_header_name_in_the_first_line_names_the_line_test() {
+  let body = <<
+    "--b\r\nX-", 0xFF,
+    ": a\r\nContent-Disposition: form-data; name=\"f\"\r\n\r\nx\r\n--b--",
+  >>
+  assert parse(body) == Error(InvalidHeader("X-\u{FFFD}: a"))
+  assert stream_parse(body) == Error(InvalidHeader("X-\u{FFFD}: a"))
+}
+
+pub fn header_errors_are_reported_in_line_order_test() {
+  let first_bad = <<"--b\r\nX-A: ", 0xC0, "\r\nNoColon\r\n\r\nx\r\n--b--">>
+  assert parse(first_bad) == Error(InvalidHeader("X-A: \u{FFFD}"))
+  assert stream_parse(first_bad) == Error(InvalidHeader("X-A: \u{FFFD}"))
+  let second_bad = <<"--b\r\nNoColon\r\nX-A: ", 0xC0, "\r\n\r\nx\r\n--b--">>
+  assert parse(second_bad) == Error(InvalidHeader("NoColon"))
+  assert stream_parse(second_bad) == Error(InvalidHeader("NoColon"))
+}
+
+pub fn truncated_and_surrogate_sequences_are_replaced_test() {
+  // A truncated "あ" (E3 81) is one U+FFFD; an encoded surrogate (ED A0 80)
+  // is three, as the WHATWG decoder gives.
+  let body = <<
+    "--b\r\nX-A: ", 0xE3, 0x81, "|", 0xED, 0xA0, 0x80, "|", "あ":utf8,
+    "\r\n\r\nx\r\n--b--",
+  >>
+  let line = "X-A: \u{FFFD}|\u{FFFD}\u{FFFD}\u{FFFD}|あ"
+  assert parse(body) == Error(InvalidHeader(line))
+  assert stream_parse(body) == Error(InvalidHeader(line))
+}
+
+pub fn non_utf8_folded_line_names_the_physical_line_test() {
+  let body = <<
+    "--b\r\nContent-Disposition: form-data;\r\n\tfilename=\"", 0xE9,
+    "\"\r\n\r\nx\r\n--b--",
+  >>
+  assert parse(body) == Error(InvalidHeader("\tfilename=\"\u{FFFD}\""))
+  assert stream_parse(body) == Error(InvalidHeader("\tfilename=\"\u{FFFD}\""))
+}
+
+pub fn non_utf8_header_split_across_chunks_names_the_line_test() {
+  let chunks = [
+    <<"--b\r\nContent-Disposition: form-data; name=\"f\"; filename=\"", 0xE3>>,
+    <<0x81, "\"\r\n\r\nx\r\n--b--">>,
+  ]
+  let assert Ok(parts) =
+    stream.parse(yielder.from_list(chunks), ct, multipartkit.default_limits)
+  assert yielder.to_list(parts)
+    == [
+      Error(InvalidHeader(
+        "Content-Disposition: form-data; name=\"f\"; filename=\"\u{FFFD}\"",
+      )),
+    ]
+}
+
 // RFC 5322 §3.6.8: a field name is printable ASCII other than `:`, so
 // `Content-Disposition : ...` is not a Content-Disposition header.
 

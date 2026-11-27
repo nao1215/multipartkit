@@ -35,9 +35,10 @@ pub type MultipartError {
   /// The media type is not `multipart/*`.
   UnsupportedMediaType(media_type: String)
   /// A header line has no `:`, has a name that is empty or holds a space,
-  /// tab or other character outside printable ASCII, holds CR or NUL, or is
-  /// a continuation line with no header before it. It holds the line, or
-  /// `""` when the header block is not UTF-8.
+  /// tab or other character outside printable ASCII, holds CR or NUL, is
+  /// not UTF-8, or is a continuation line with no header before it. It
+  /// holds the line, with each byte sequence that is not UTF-8 replaced by
+  /// U+FFFD.
   InvalidHeader(line: String)
   /// A `Content-Disposition` value could not be parsed or has a parameter
   /// more than once. It holds the value.
