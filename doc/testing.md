@@ -24,16 +24,25 @@
 
 ## Mutation testing
 
-There is no mutation testing tool for Gleam, so `gleam_mutate.py` (from the mutation-testing lab in nao1215/debimate, with integer comparison and arithmetic operators added) is run by hand on a copy of the project. It rewrites one operator or boolean result at a time (`==`/`!=`, `<`/`<=`, `>`/`>=`, `+`/`-`, `&&`/`||`, `-> True`/`-> False`, a dropped `!`) and runs `gleam test` on the Erlang target. The score is killed / (killed + lived).
+`gleam run -m metamon/mutation` changes one operator, `!` or boolean literal in a module under `src/` at a time and runs `gleam test --target erlang` on each change. `.github/workflows/mutation.yml` mutates the modules a pull request or push changes and fails on a survivor that `doc/mutation/baseline.json` does not list; the weekly run mutates every module. `just mutation` runs it locally and `just mutation-record` records a new baseline.
 
-| Date | Files | Killed | Lived | Score |
-|---|---|---:|---:|---:|
-| 2026-11-19 | every module under `src/`, before the differential and boundary tests | 116 | 112 | 50.9% |
-| 2026-11-19 | every module under `src/`, after | 188 | 40 | 82.5% |
+The first run (2026-11-27) scored 84.2% (186 killed, 35 lived). Tests were then added for the first and last lead byte of each UTF-8 range and the lowest and highest continuation byte in a header line that is not UTF-8, every ASCII character in a header name and in an unquoted parameter value, a non-ASCII character in `filename*`, a dash-boundary inside a body line, the carry that `stream.encode` keeps between body chunks, and the header and part limits at exactly the limit for unfinished input and in `stream.parse`, and the score rose to 93.2% (206 killed, 15 lived). The 15 survivors left give the same result:
 
-The remaining survivors, grouped:
+- Loop bounds in `internal/bytes` and `skip_lwsp` where `>=` and `>` (or a step past the end) take the same path because slicing past the end already fails (6).
+- The offset after the closing delimiter in `consume_closing_tail`, which neither parser reads because the epilogue is ignored (4).
+- The checks of `check_line_starts` that cannot change the carry: starting the newline search one byte past the end, a last line as long as the boundary (it equals the boundary and was rejected already, or is no prefix of it), and searching below the lowest offset, where a line is longer than the boundary (3).
+- `body_end_for` at offset 2, where the result is clamped to the start of the body either way (1).
+- The unaligned bit array case of the header name check, which a `String` never reaches (1).
 
-- `internal/bytes` and `internal/scan` (26): loop bounds where `>=` and `>` take the same path because slicing past the end already fails, and the ASCII case folding of `equals_ascii_ci`, which has since been removed as unused.
-- `stream` (4): the header-block and part-size checks at exactly the limit, and the 64 KiB body chunking, which no test reaches with a part that large.
-- `internal/headers` (3): trailing whitespace trimming where a tab and a space are handled the same way downstream.
-- Single cases in the Content-Disposition parser, the boundary length check, the Content-Type parser, the part builder, `internal/text` and the content type check. These modules were merged into `multipartkit` after the run.
+<!-- mutation:start -->
+| Module | Killed | Lived | Timed out | Score |
+|---|---:|---:|---:|---:|
+| `multipartkit` | 25 | 0 | 0 | 100.0% |
+| `multipartkit/internal/bytes` | 15 | 5 | 0 | 75.0% |
+| `multipartkit/internal/disposition` | 18 | 0 | 0 | 100.0% |
+| `multipartkit/internal/headers` | 32 | 1 | 0 | 97.0% |
+| `multipartkit/internal/scan` | 30 | 9 | 0 | 76.9% |
+| `multipartkit/internal/text` | 56 | 0 | 0 | 100.0% |
+| `multipartkit/stream` | 30 | 0 | 0 | 100.0% |
+| all | 206 | 15 | 0 | 93.2% |
+<!-- mutation:end -->

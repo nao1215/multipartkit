@@ -17,7 +17,7 @@ packages = [
   { name = "gleeunit", version = "1.11.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "gleeunit", source = "hex", outer_checksum = "EC31ABA74256AEA531EDF8169931D775BBB384FED0A8A1BDC4DD9354E3E21826" },
   { name = "glexer", version = "2.5.0", build_tools = ["gleam"], requirements = ["gleam_stdlib", "splitter"], otp_app = "glexer", source = "hex", outer_checksum = "D423CF63B8D4F9654EF53D0AF4904B249EB0679BD41C63440170AC508C9CC65E" },
   { name = "glinter", version = "2.19.2", build_tools = ["gleam"], requirements = ["argv", "glance", "gleam_json", "gleam_stdlib", "simplifile", "tom"], otp_app = "glinter", source = "hex", outer_checksum = "19CBB4D78E58E54D6B0E8554C389DC01071334FB11E9140C9487C9A4BBCA6158" },
-  { name = "metamon", version = "0.14.0", build_tools = ["gleam"], requirements = ["gleam_json", "gleam_stdlib", "simplifile"], otp_app = "metamon", source = "hex", outer_checksum = "225ED9BFBC2FF9699DD2017A0F447FBD15A279C8EFCA78653D32F49FB5B78569" },
+  { name = "metamon", version = "0.17.0", build_tools = ["gleam"], requirements = ["glance", "gleam_json", "gleam_stdlib", "simplifile"], otp_app = "metamon", source = "hex", outer_checksum = "05A3A72419832E9084F8929C38BBC674A97BF3BB14069EB31679C62E3198152B" },
   { name = "mimetype", version = "0.27.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "mimetype", source = "hex", outer_checksum = "029702840CC788ABB8A138FE4C6EFC7F3CA076AAB6C6B26F430C40B317052224" },
   { name = "simplifile", version = "2.7.0", build_tools = ["gleam"], requirements = ["filepath", "gleam_stdlib"], otp_app = "simplifile", source = "hex", outer_checksum = "A2727627B063E87351934C7F7F008F2D1FDB16F6DE0B8C79F9E46459CFC9C164" },
   { name = "splitter", version = "1.3.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "splitter", source = "hex", outer_checksum = "8F1485306E0D59168A39E12ED8844F9F616EC59C3C63AFCFDAE04DBD68690CBC" },
@@ -29,5 +29,5 @@ gleam_stdlib = { version = ">= 0.44.0 and < 2.0.0" }
 gleam_yielder = { version = ">= 1.0.0 and < 2.0.0" }
 gleeunit = { version = ">= 1.0.0 and < 2.0.0" }
 glinter = { version = ">= 2.14.0 and < 3.0.0" }
-metamon = { version = ">= 0.14.0 and < 1.0.0" }
+metamon = { version = ">= 0.17.0 and < 1.0.0" }
 mimetype = { version = ">= 0.27.0 and < 1.0.0" }

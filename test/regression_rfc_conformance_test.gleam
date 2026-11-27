@@ -13,6 +13,7 @@ import multipartkit.{
   InvalidContentType, InvalidHeader, InvalidHeaderName, InvalidQuotedPair,
   UnexpectedEndOfInput, UnsupportedMediaType,
 }
+import multipartkit/internal/scan
 import multipartkit/stream
 
 const ct = "multipart/form-data; boundary=b"
@@ -72,6 +73,17 @@ pub fn padding_before_the_closing_dashes_is_not_a_delimiter_test() {
   >>
   assert parse(body) == Error(UnexpectedEndOfInput)
   assert stream_parse(body) == Error(UnexpectedEndOfInput)
+}
+
+pub fn dash_boundary_inside_a_line_is_body_test() {
+  // RFC 2046 §5.1.1: a delimiter starts a line.
+  let body = <<
+    "--b\r\nContent-Disposition: form-data; name=\"f\"\r\n\r\nx--b\r\ny\r\n--b--",
+  >>
+  let assert Ok([part]) = parse(body)
+  assert multipartkit.body(part) == <<"x--b\r\ny">>
+  assert stream_parse(body)
+    == Ok([#(multipartkit.headers(part), <<"x--b\r\ny">>)])
 }
 
 // RFC 5322 §2.2.3: a header line that starts with a space or tab
@@ -164,6 +176,20 @@ pub fn truncated_and_surrogate_sequences_are_replaced_test() {
     "\r\n\r\nx\r\n--b--",
   >>
   let line = "X-A: \u{FFFD}|\u{FFFD}\u{FFFD}\u{FFFD}|あ"
+  assert parse(body) == Error(InvalidHeader(line))
+  assert stream_parse(body) == Error(InvalidHeader(line))
+}
+
+pub fn sequences_at_the_edges_of_the_utf8_ranges_are_kept_test() {
+  // The first and last lead byte of each range, and the lowest and highest
+  // continuation byte, in a line that is not UTF-8 because of 0xFF.
+  let body = <<
+    "--b\r\nX-A: ", 0xFF, "|", 0xC2, 0x80, "|", 0xDF, 0xBF, "|", 0xE1, 0x80,
+    0x80, "|", 0xEF, 0x80, 0x80, "|", 0xF1, 0x80, 0x80, 0x80, "|", 0xF3, 0x80,
+    0x80, 0x80, "\r\n\r\nx\r\n--b--",
+  >>
+  let line =
+    "X-A: \u{FFFD}|\u{0080}|\u{07FF}|\u{1000}|\u{F000}|\u{40000}|\u{C0000}"
   assert parse(body) == Error(InvalidHeader(line))
   assert stream_parse(body) == Error(InvalidHeader(line))
 }
@@ -389,6 +415,26 @@ pub fn stream_encode_rejects_the_boundary_across_chunks_test() {
   assert stream_encode_last(body) == Ok(Ok(<<"--b--\r\n">>))
 }
 
+pub fn stream_encode_carries_only_a_line_that_can_still_become_the_boundary_test() {
+  // The first chunk ends with a line `--` that starts right after the
+  // lowest offset a line of the boundary's length can start at.
+  let body = <<padding(65_533):bits, "\n--b":utf8>>
+  assert stream_encode_last(body) == Ok(Error(InvalidBoundary("b")))
+  // The second chunk starts in the middle of a line.
+  let body = <<padding(65_536):bits, "--b\r\n":utf8>>
+  assert stream_encode_last(body) == Ok(Ok(<<"--b--\r\n">>))
+  // The same for chunks shorter than the boundary, as stream.parse gives.
+  let pattern = <<"--b">>
+  assert scan.check_line_starts(Some(<<>>), <<"\n--">>, pattern)
+    == Ok(Some(<<"--">>))
+  assert scan.check_line_starts(Some(<<>>), <<"a\n--">>, pattern)
+    == Ok(Some(<<"--">>))
+  assert scan.check_line_starts(None, <<"--b">>, pattern) == Ok(None)
+  assert scan.check_line_starts(None, <<"-">>, pattern) == Ok(None)
+  assert scan.check_line_starts(Some(<<>>), <<"-">>, pattern)
+    == Ok(Some(<<"-">>))
+}
+
 // Error variants that hold a `String` have labels, like the others.
 
 pub fn error_variants_have_labels_test() {
@@ -455,6 +501,27 @@ pub fn an_unfinished_part_over_the_part_limit_is_part_too_large_test() {
   assert multipartkit.parse(body, ct, limits)
     == Error(multipartkit.PartTooLarge(4))
   assert stream_with([body], limits) == [Error(multipartkit.PartTooLarge(4))]
+}
+
+pub fn unfinished_input_exactly_at_a_limit_is_unexpected_end_test() {
+  // Six header bytes after the delimiter, and no blank line yet.
+  let headers = <<"--b\r\nX-A: 1">>
+  assert multipartkit.parse(headers, ct, small_limits(1000, 100, 6))
+    == Error(UnexpectedEndOfInput)
+  assert stream_with([headers], small_limits(1000, 100, 6))
+    == [Error(UnexpectedEndOfInput)]
+  assert multipartkit.parse(headers, ct, small_limits(1000, 100, 5))
+    == Error(multipartkit.HeaderTooLarge(5))
+  assert stream_with([headers], small_limits(1000, 100, 5))
+    == [Error(multipartkit.HeaderTooLarge(5))]
+  // Ten body bytes, of which the last four could still start `\r\n--b`.
+  let body = <<"--b\r\n\r\n0123456789">>
+  assert multipartkit.parse(body, ct, small_limits(1000, 6, 100))
+    == Error(UnexpectedEndOfInput)
+  assert stream_with([body], small_limits(1000, 6, 100))
+    == [Error(UnexpectedEndOfInput)]
+  assert multipartkit.parse(body, ct, small_limits(1000, 5, 100))
+    == Error(multipartkit.PartTooLarge(5))
 }
 
 pub fn transport_padding_does_not_count_as_part_body_test() {
